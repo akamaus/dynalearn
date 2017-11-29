@@ -48,10 +48,21 @@ class DynaModel:
 
     def build_model(self, inp):
         x = K.layers.Input(tensor=inp)
-        x = K.layers.Flatten()(x)
-        x = K.layers.Dense(100, activation='relu')(x)
-        x = K.layers.Dense(IMG_SIZE*IMG_SIZE, activation='relu')(x)
+        x = K.layers.Reshape((IMG_SIZE, IMG_SIZE, 1))(x)
+        x = K.layers.Conv2D(filters=4, kernel_size=3, strides=2, activation='relu', padding='same')(x)
+        x = K.layers.Conv2D(filters=8, kernel_size=3, strides=2, activation='relu', padding='same')(x)
+
+        x = K.layers.Conv2DTranspose(filters=4, kernel_size=3, strides=2, activation='relu', padding='same')(x)
+        x = K.layers.Conv2DTranspose(filters=1, kernel_size=3, strides=2, activation='relu', padding='same')(x)
+
         x = K.layers.Reshape((IMG_SIZE, IMG_SIZE))(x)
+
+        #x = K.layers.Conv2D(filters=16, kernel_size=3, strides=2, activation='relu')(x)
+        #x = K.layers.Conv2DTranspose(filters=8, kernel_size=3, strides=2, activation='relu')(x)
+        #x = K.layers.Flatten()(x)
+        #x = K.layers.Dense(100, activation='relu')(x)
+        #x = K.layers.Dense(IMG_SIZE*IMG_SIZE, activation='relu')(x)
+#        x = K.layers.Reshape((IMG_SIZE, IMG_SIZE))(x)
         return x
 
     def predict(self, frame):
@@ -77,8 +88,6 @@ class DynaModel:
             if on_epoch_finish:
                 on_epoch_finish(ep)
 
-            self.save()
-
     def save(self):
         print("Saved checkpoint")
         self.saver.save(self.sess, "models/model1")
@@ -100,8 +109,9 @@ def draw_frames(frames):
 
 
 def experiment():
-    frames = []
+    dyna = DynaModel()
 
+    frames = []
     for img in render_spiral():
         frames.append(np.array(img) / 255.0)
 
@@ -111,11 +121,11 @@ def experiment():
 
         pred_frames = dyna.predict(frames[0:100])
         draw_frames(pred_frames)
+        dyna.save()
 
-    #draw_frames(frames)
+    #draw_frames(frames[::10])
 
-    dyna = DynaModel()
-    dyna.train(frames[:-1], frames[1:], on_epoch_finish=test_prediction, batch_size=32, num_epochs=100)
+    dyna.train(frames[:-1], frames[1:], on_epoch_finish=test_prediction, batch_size=64, num_epochs=100)
 
 
 if __name__ == '__main__':
