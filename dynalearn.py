@@ -190,17 +190,19 @@ def experiment():
         if ep % 5 != 0:
             return
 
-        pred_one_step = dyna.predict(frames[0:100])
-        pred_far = far_prediction()
+        episode = 100
+
+        start_frame = random.randint(0, len(frames) - episode*2)
+        pred_one_step = dyna.predict(frames[start_frame: start_frame+episode])
+        pred_far = far_prediction(rnd_rad_frames[start_frame], episode)
         gap = np.zeros((IMG_SIZE, 10), dtype=np.float32)
         draw_frames(map(lambda ps: np.concatenate([ps[0], gap, ps[1]], axis=1), zip(pred_one_step, pred_far)))
 
         dyna.save()
 
-    def far_prediction():
-        fr = frames[10]
+    def far_prediction(fr, episode_len):
         pred_frames = []
-        for i in range(100):
+        for i in range(episode_len):
             fr = dyna.predict(fr)
             pred_frames.append(fr)
         return pred_frames
