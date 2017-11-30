@@ -13,21 +13,31 @@ import tensorflow.contrib.keras as K
 IMG_SIZE=128
 
 
-def render_circle(angle, dist=IMG_SIZE/2.5, rad=IMG_SIZE//10):
-    img = PI.new('L', (IMG_SIZE, IMG_SIZE))
-    draw = PD.Draw(img)
-
+def polar_circle(angle, dist=IMG_SIZE / 2.5, rad=IMG_SIZE // 10):
     x = math.cos(angle) * dist + IMG_SIZE/2
     y = math.sin(angle) * dist + IMG_SIZE/2
+
+    return carthesian_circle(x,y, rad)
+
+
+def carthesian_circle(x,y, rad=IMG_SIZE//10):
+    img = PI.new('L', (IMG_SIZE, IMG_SIZE))
+    draw = PD.Draw(img)
 
     hr = rad//2
     draw.ellipse((x-hr, y-hr, x+hr, y+hr), fill='white', outline='white')
     return img
 
 
-def render_spiral(num_frames=10000):
+def render_spiral_move(num_frames=10000):
     for frame in range(0, num_frames):
-        img = render_circle(angle=frame * (2 * math.pi) / 100, dist=20 + IMG_SIZE/3/(1+num_frames - frame))
+        img = polar_circle(angle=frame * (2 * math.pi) / 100, dist=20 + IMG_SIZE / 3 / (1 + num_frames - frame))
+        yield img
+
+
+def render_linear_move(num_frames=100):
+    for fr in range(num_frames):
+        img = carthesian_circle(10 + (IMG_SIZE-20)/num_frames*fr, IMG_SIZE/2)
         yield img
 
 
@@ -153,15 +163,18 @@ def draw_frames(frames):
 
 
 def experiment():
-    dyna = DynaModel('conv2_deconv2_fs8_dense_2')
+    dyna = DynaModel('conv2_dense2_deconv2_fs8_linear')
     dyna.restore()
 
     frames = []
-    for img in render_spiral():
+    for img in render_linear_move(num_frames=128):
         frames.append(np.array(img) / 255.0)
 
+    #draw_frames(frames)
+    #exit(0)
+
     def test_prediction(ep):
-        if ep % 10 != 0:
+        if ep % 100 != 0:
             return
 
         pred_one_step = dyna.predict(frames[0:100])
