@@ -12,6 +12,7 @@ let
     ( with pkgs;
       with self;
     [
+      imageio
       ipython
       matplotlib
       numpy

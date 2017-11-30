@@ -10,6 +10,8 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.keras as K
 
+import video_utils as VU
+
 IMG_SIZE=128
 
 
@@ -34,7 +36,7 @@ def render_spiral_move(num_frames=10000, radius_mean=10, radius_std=0):
         rad = np.random.normal(radius_mean, radius_std)
         if rad <= 1:
             rad = 1
-        img = polar_circle(angle=frame * (2 * math.pi) / 100, dist=20 + IMG_SIZE / 3 / (1 + num_frames - frame), radius=rad)
+        img = polar_circle(angle=frame * (2 * math.pi) / 100, dist=10 + (IMG_SIZE / 2 - 20) / (1 + num_frames) * frame, radius=rad)
         yield img
 
 
@@ -49,9 +51,12 @@ class DynaModel:
         self.name = name
 
         self.step = tf.Variable(0, trainable=False, name='step')
-        self.p_frames1 = tf.placeholder(dtype=tf.float32, shape=[None, IMG_SIZE, IMG_SIZE])
-        self.p_frames2 = tf.placeholder(dtype=tf.float32, shape=[None, IMG_SIZE, IMG_SIZE])
-        self.t_frame_predict = self.build_model(self.p_frames1)
+
+        batch_sh = [None, IMG_SIZE, IMG_SIZE]
+        self.p_frames1 = tf.placeholder(dtype=tf.float32, shape=batch_sh)
+        self.p_frames2 = tf.placeholder(dtype=tf.float32, shape=batch_sh)
+
+        self.t_frame_predict = tf.maximum(tf.minimum(self.build_model(self.p_frames1), 1), 0)
 
         self.loss = tf.losses.mean_squared_error(self.t_frame_predict, self.p_frames2)
         tf.summary.scalar('loss', self.loss)
@@ -158,31 +163,25 @@ class DynaModel:
             print("Starting afresh")
 
 
-axis = None
+vu = VU.VideoWriter("dynamics.mp4", show=False)
 def draw_frames(frames):
-    global axis
+    global vu
 
-    plt.ion()
     for fr in frames:
-        if axis is None:
-            axis = plt.imshow(fr)
-            plt.show()
-        else:
-            axis.set_data(fr)
-        plt.pause(0.01)
-
+        vu.consume(fr)
 
 def experiment():
-    dyna = DynaModel('conv3_deconv3_fs8_ks3_spiral_std_1')
+    dyna = DynaModel('conv3_deconv3_fs8_ks3_spiral_std_1_noise0.01')
     dyna.restore()
 
     frames = []
     for img in render_spiral_move(num_frames=8192):
-        frames.append(np.array(img) / 255.0)
+        frames.append(np.array(img) / 128.0)
 
     rnd_rad_frames = []
     for img in render_spiral_move(num_frames=8192, radius_mean=10, radius_std=1):
-        rnd_rad_frames.append(np.array(img) / 255.0)
+        noise = np.random.normal(0, 0.01, (IMG_SIZE, IMG_SIZE))
+        rnd_rad_frames.append(np.array(img) / 128.0 + noise)
 
     #draw_frames(rnd_rad_frames)
     #exit(0)
@@ -213,4 +212,8 @@ def experiment():
 
 
 if __name__ == '__main__':
-    experiment()
+    try:
+        experiment()
+    finally:
+        print("Closing video")
+        vu.close()
