@@ -119,9 +119,13 @@ class DynaModel:
                 if step % 10 == 0:
                     targets['summary'] = tf.summary.merge_all()
 
+                batch = frames[idx:idx+batch_size]
+                bfs1 = list(map(lambda f: f[0], batch))
+                bfs2 = list(map(lambda f: f[1], batch))
+#                plt.imshow(bfs1[10] - bfs2[10])
+
                 res = self.sess.run(targets,
-                                    feed_dict={self.p_frames1: frames[idx:idx+batch_size][0],
-                                               self.p_frames2: frames[idx:idx+batch_size][1], K.backend.learning_phase(): True})
+                                    feed_dict={self.p_frames1: bfs1, self.p_frames2: bfs2, K.backend.learning_phase(): True})
 
                 if 'summary' in res:
                     self.writer.add_summary(res['summary'], global_step=step)
