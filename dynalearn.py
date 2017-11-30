@@ -62,7 +62,9 @@ class DynaModel:
         tf.summary.scalar('loss', self.loss)
         self.train_op = tf.train.AdamOptimizer(learning_rate=0.0001).minimize(self.loss, global_step=self.step)
 
-        self.sess = tf.Session()
+        cfg = tf.ConfigProto()
+        cfg.gpu_options.allow_growth = True
+        self.sess = tf.Session(config=cfg)
         self.sess.run(tf.global_variables_initializer())
 
         self.saver = tf.train.Saver()
@@ -164,7 +166,7 @@ class DynaModel:
             print("Starting afresh")
 
 
-vu = VU.VideoWriter("dynamics.mp4", show=False)
+vu = VU.VideoWriter("dynamics.mp4", show=True)
 def draw_frames(frames):
     global vu
 
@@ -191,7 +193,7 @@ def experiment():
         if ep % 5 != 0:
             return
 
-        episode = 100
+        episode = 500
 
         start_frame = random.randint(0, len(frames) - episode*2)
         pred_one_step = dyna.predict(frames[start_frame: start_frame+episode])
