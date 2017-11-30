@@ -13,14 +13,14 @@ import tensorflow.contrib.keras as K
 IMG_SIZE=128
 
 
-def polar_circle(angle, dist=IMG_SIZE / 2.5, rad=IMG_SIZE // 10):
+def polar_circle(angle, dist=IMG_SIZE / 2.5, radius=IMG_SIZE // 10):
     x = math.cos(angle) * dist + IMG_SIZE/2
     y = math.sin(angle) * dist + IMG_SIZE/2
 
-    return carthesian_circle(x,y, rad)
+    return carthesian_circle(x, y, radius)
 
 
-def carthesian_circle(x,y, rad=IMG_SIZE//10):
+def carthesian_circle(x, y, rad=IMG_SIZE//10):
     img = PI.new('L', (IMG_SIZE, IMG_SIZE))
     draw = PD.Draw(img)
 
@@ -29,9 +29,12 @@ def carthesian_circle(x,y, rad=IMG_SIZE//10):
     return img
 
 
-def render_spiral_move(num_frames=10000):
+def render_spiral_move(num_frames=10000, radius_mean=10, radius_std=0):
     for frame in range(0, num_frames):
-        img = polar_circle(angle=frame * (2 * math.pi) / 100, dist=20 + IMG_SIZE / 3 / (1 + num_frames - frame))
+        rad = np.random.normal(radius_mean, radius_std)
+        if rad <= 1:
+            rad = 1
+        img = polar_circle(angle=frame * (2 * math.pi) / 100, dist=20 + IMG_SIZE / 3 / (1 + num_frames - frame), radius=rad)
         yield img
 
 
@@ -63,6 +66,7 @@ class DynaModel:
     def build_model(self, inp):
         ks = 3
         fs = 8
+
         x = K.layers.Input(tensor=inp)
         x = K.layers.Reshape((IMG_SIZE, IMG_SIZE, 1))(x)
         #x = K.layers.BatchNormalization()(x)
@@ -72,10 +76,10 @@ class DynaModel:
 #        x = K.layers.BatchNormalization()(x)
         x = K.layers.Conv2D(filters=2, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
 
-        x = K.layers.Flatten()(x)
-        x = K.layers.Dense(100)(x)
-        x = K.layers.Dense(2 * IMG_SIZE ** 2 // 4 // 4 // 4)(x)
-        x = K.layers.Reshape((IMG_SIZE // 8, IMG_SIZE // 8, 2))(x)
+        # x = K.layers.Flatten()(x)
+        # x = K.layers.Dense(100)(x)
+        # x = K.layers.Dense(2 * IMG_SIZE ** 2 // 4 // 4 // 4)(x)
+        # x = K.layers.Reshape((IMG_SIZE // 8, IMG_SIZE // 8, 2))(x)
 
         x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
         x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
@@ -169,18 +173,22 @@ def draw_frames(frames):
 
 
 def experiment():
-    dyna = DynaModel('conv3_dense_deconv3_fs8_ks3_linear_3')
+    dyna = DynaModel('conv3_deconv3_fs8_ks3_spiral_std_1')
     dyna.restore()
 
     frames = []
-    for img in render_linear_move(num_frames=128):
+    for img in render_spiral_move(num_frames=8192):
         frames.append(np.array(img) / 255.0)
 
-    #draw_frames(frames)
+    rnd_rad_frames = []
+    for img in render_spiral_move(num_frames=8192, radius_mean=10, radius_std=1):
+        rnd_rad_frames.append(np.array(img) / 255.0)
+
+    #draw_frames(rnd_rad_frames)
     #exit(0)
 
     def test_prediction(ep):
-        if ep % 100 != 0:
+        if ep % 5 != 0:
             return
 
         pred_one_step = dyna.predict(frames[0:100])
@@ -201,7 +209,7 @@ def experiment():
 
     #draw_frames(frames[::10])
 
-    dyna.train(frames[:-1], frames[1:], on_epoch_finish=test_prediction, batch_size=64, num_epochs=100000)
+    dyna.train(rnd_rad_frames[:-1], frames[1:], on_epoch_finish=test_prediction, batch_size=64, num_epochs=100000)
 
 
 if __name__ == '__main__':
