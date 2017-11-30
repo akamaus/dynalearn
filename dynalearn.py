@@ -56,7 +56,7 @@ class DynaModel:
         self.p_frames1 = tf.placeholder(dtype=tf.float32, shape=batch_sh)
         self.p_frames2 = tf.placeholder(dtype=tf.float32, shape=batch_sh)
 
-        self.t_frame_predict = tf.maximum(tf.minimum(self.build_model(self.p_frames1), 1), 0)
+        self.t_frame_predict = self.build_model(self.p_frames1)
 
         self.loss = tf.losses.mean_squared_error(self.t_frame_predict, self.p_frames2)
         tf.summary.scalar('loss', self.loss)
@@ -107,6 +107,7 @@ class DynaModel:
         else:
             expanded = False
         res = self.sess.run(self.t_frame_predict, feed_dict={self.p_frames1: frame, K.backend.learning_phase(): False})
+        res = np.maximum(np.minimum(res, 1), 0)
 
         if expanded:
             res = np.squeeze(res, axis=0)
