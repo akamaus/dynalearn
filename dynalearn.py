@@ -48,16 +48,18 @@ class DynaModel:
         self.sess.run(tf.global_variables_initializer())
 
         self.saver = tf.train.Saver()
-        self.writer = tf.summary.FileWriter('logs')
-
+        self.writer = tf.summary.FileWriter(os.path.join('logs', self.name))
 
     def build_model(self, inp):
         ks = 2
         fs = 8
         x = K.layers.Input(tensor=inp)
         x = K.layers.Reshape((IMG_SIZE, IMG_SIZE, 1))(x)
+        #x = K.layers.BatchNormalization()(x)
         x = K.layers.Conv2D(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
+#        x = K.layers.BatchNormalization()(x)
         x = K.layers.Conv2D(filters=fs*2, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
+#        x = K.layers.BatchNormalization()(x)
 
         x = K.layers.Flatten()(x)
         x = K.layers.Dense(100)(x)
@@ -83,7 +85,7 @@ class DynaModel:
             frame = np.expand_dims(frame, axis=0)
         else:
             expanded = False
-        res = self.sess.run(self.t_frame_predict, feed_dict={self.p_frames1: frame})
+        res = self.sess.run(self.t_frame_predict, feed_dict={self.p_frames1: frame, K.backend.learning_phase(): False})
 
         if expanded:
             res = np.squeeze(res, axis=0)
@@ -107,7 +109,7 @@ class DynaModel:
 
                 res = self.sess.run(targets,
                                     feed_dict={self.p_frames1: frames[idx:idx+batch_size][0],
-                                               self.p_frames2: frames[idx:idx+batch_size][1]})
+                                               self.p_frames2: frames[idx:idx+batch_size][1], K.backend.learning_phase(): True})
 
                 if 'summary' in res:
                     self.writer.add_summary(res['summary'], global_step=step)
@@ -151,7 +153,7 @@ def draw_frames(frames):
 
 
 def experiment():
-    dyna = DynaModel('conv2_deconv2_fs8_dense')
+    dyna = DynaModel('conv2_deconv2_fs8_dense_2')
     dyna.restore()
 
     frames = []
@@ -162,9 +164,11 @@ def experiment():
         if ep % 10 != 0:
             return
 
-        #pred_frames = dyna.predict(frames[0:100])
-        #draw_frames(pred_frames)
-        far_prediction()
+        pred_one_step = dyna.predict(frames[0:100])
+        pred_far = far_prediction()
+        gap = np.zeros((IMG_SIZE, 10), dtype=np.float32)
+        draw_frames(map(lambda ps: np.concatenate([ps[0], gap, ps[1]], axis=1), zip(pred_one_step, pred_far)))
+
         dyna.save()
 
     def far_prediction():
@@ -173,12 +177,12 @@ def experiment():
         for i in range(100):
             fr = dyna.predict(fr)
             pred_frames.append(fr)
-        draw_frames(pred_frames)
+        return pred_frames
 
 
     #draw_frames(frames[::10])
 
-    dyna.train(frames[:-1], frames[1:], on_epoch_finish=test_prediction, batch_size=64, num_epochs=10000)
+    dyna.train(frames[:-1], frames[1:], on_epoch_finish=test_prediction, batch_size=64, num_epochs=100000)
 
 
 if __name__ == '__main__':
