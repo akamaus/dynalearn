@@ -61,21 +61,23 @@ class DynaModel:
         self.writer = tf.summary.FileWriter(os.path.join('logs', self.name))
 
     def build_model(self, inp):
-        ks = 2
+        ks = 3
         fs = 8
         x = K.layers.Input(tensor=inp)
         x = K.layers.Reshape((IMG_SIZE, IMG_SIZE, 1))(x)
         #x = K.layers.BatchNormalization()(x)
         x = K.layers.Conv2D(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
 #        x = K.layers.BatchNormalization()(x)
-        x = K.layers.Conv2D(filters=fs*2, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
+        x = K.layers.Conv2D(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
 #        x = K.layers.BatchNormalization()(x)
+        x = K.layers.Conv2D(filters=2, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
 
         x = K.layers.Flatten()(x)
         x = K.layers.Dense(100)(x)
-        x = K.layers.Dense(IMG_SIZE ** 2 // 4 // 4 * fs * 2)(x)
-        x = K.layers.Reshape((IMG_SIZE // 4, IMG_SIZE // 4, fs*2))(x)
+        x = K.layers.Dense(2 * IMG_SIZE ** 2 // 4 // 4 // 4)(x)
+        x = K.layers.Reshape((IMG_SIZE // 8, IMG_SIZE // 8, 2))(x)
 
+        x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
         x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
         x = K.layers.Conv2DTranspose(filters=1, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
 
@@ -163,7 +165,7 @@ def draw_frames(frames):
 
 
 def experiment():
-    dyna = DynaModel('conv2_dense2_deconv2_fs8_linear')
+    dyna = DynaModel('conv3_dense_deconv3_fs8_ks3_linear_3')
     dyna.restore()
 
     frames = []
