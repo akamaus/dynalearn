@@ -47,19 +47,21 @@ def render_linear_move(num_frames=100):
         yield img
 
 
-class DynaModel:
-    def __init__(self, name):
+class DynaModelMF:
+    def __init__(self, name, num_frames=2):
         self.name = name
-
+        self.num_frames = num_frames
         self.step = tf.Variable(0, trainable=False, name='step')
 
-        batch_sh = [None, IMG_SIZE, IMG_SIZE]
-        self.p_frames1 = tf.placeholder(dtype=tf.float32, shape=batch_sh)
-        self.p_frames2 = tf.placeholder(dtype=tf.float32, shape=batch_sh)
+        inp_batch_sh = [None, IMG_SIZE, IMG_SIZE, num_frames]
+        out_batch_sh = [None, IMG_SIZE, IMG_SIZE]
 
-        self.t_frame_predict = self.build_model(self.p_frames1)
+        self.p_inp_frames = tf.placeholder(dtype=tf.float32, shape=inp_batch_sh)
+        self.p_tgt_frame = tf.placeholder(dtype=tf.float32, shape=out_batch_sh)
 
-        self.loss = tf.losses.mean_squared_error(self.t_frame_predict, self.p_frames2)
+        self.t_frame_predict = self.build_model(self.p_inp_frames)
+
+        self.loss = tf.losses.mean_squared_error(self.t_frame_predict, self.p_tgt_frame)
         tf.summary.scalar('loss', self.loss)
         self.train_op = tf.train.AdamOptimizer(learning_rate=0.0001).minimize(self.loss, global_step=self.step)
 
@@ -76,39 +78,31 @@ class DynaModel:
         fs = 8
 
         x = K.layers.Input(tensor=inp)
-        x = K.layers.Reshape((IMG_SIZE, IMG_SIZE, 1))(x)
-        #x = K.layers.BatchNormalization()(x)
         x = K.layers.Conv2D(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
-#        x = K.layers.BatchNormalization()(x)
         x = K.layers.Conv2D(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
-#        x = K.layers.BatchNormalization()(x)
         x = K.layers.Conv2D(filters=2, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
 
-        x = K.layers.Flatten()(x)
-        x = K.layers.Dense(512)(x)
-        x = K.layers.Reshape((IMG_SIZE // 8, IMG_SIZE // 8, 2))(x)
+        # x = K.layers.Flatten()(x)
+        # x = K.layers.Dense(512)(x)
+        # x = K.layers.Reshape((IMG_SIZE // 8, IMG_SIZE // 8, 2))(x)
 
         x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
         x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
         x = K.layers.Conv2DTranspose(filters=1, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
 
         x = K.layers.Reshape((IMG_SIZE, IMG_SIZE))(x)
-
-        #x = K.layers.Conv2D(filters=16, kernel_size=3, strides=2, activation='relu')(x)
-        #x = K.layers.Conv2DTranspose(filters=8, kernel_size=3, strides=2, activation='relu')(x)
-        #x = K.layers.Flatten()(x)
-        #x = K.layers.Dense(100, activation='relu')(x)
-        #x = K.layers.Dense(IMG_SIZE*IMG_SIZE, activation='relu')(x)
-#        x = K.layers.Reshape((IMG_SIZE, IMG_SIZE))(x)
         return x
 
     def predict(self, frame):
-        if np.ndim(frame) == 2:
+        if np.ndim(frame) == 3:
             expanded = True
             frame = np.expand_dims(frame, axis=0)
-        else:
+        elif np.ndim(frame) == 4:
             expanded = False
-        res = self.sess.run(self.t_frame_predict, feed_dict={self.p_frames1: frame, K.backend.learning_phase(): False})
+        else:
+            raise Exception("unknown dims")
+
+        res = self.sess.run(self.t_frame_predict, feed_dict={self.p_inp_frames: frame, K.backend.learning_phase(): False})
         res = np.maximum(np.minimum(res, 1), 0)
 
         if expanded:
@@ -119,25 +113,36 @@ class DynaModel:
     def get_step(self):
         return self.sess.run(self.step)
 
-    def train(self, frames1, frames2, num_epochs=10, batch_size=8, on_epoch_finish=None):
-        frames = list(zip(frames1, frames2))
-        random.shuffle(frames)
+    def train(self, inp_frames, tgt_frames, num_epochs=10, batch_size=8, on_epoch_finish=None):
+        frame_pile = np.stack(inp_frames)
+
+        n = len(inp_frames)
+        inp_frame_seqs = []
+        for k in range(self.num_frames):
+            inp_frame_seqs.append(frame_pile[k:n - self.num_frames + k])
+        inp_frame_seqs.append(tgt_frames[k+1:n - self.num_frames + k + 1])
+
+        frames = np.stack(inp_frame_seqs)
+        frames = frames.transpose((1,2,3,0))
 
         for ep in range(num_epochs):
+            np.random.shuffle(frames)
+
+            num_batches = frames.shape[0] // batch_size
+            batches = frames[0:num_batches*batch_size]
+
             print("Epoch", ep)
-            for idx in range(0, len(frames), batch_size):
+            for batch in np.split(batches, batch_size):
+                inp_frames = batch[:, :, :, :-1]
+                tgt_frames = batch[:, :, :, -1]
+
                 step = self.get_step()
                 targets = {'loss': self.loss, 'train_op': self.train_op}
                 if step % 10 == 0:
                     targets['summary'] = tf.summary.merge_all()
 
-                batch = frames[idx:idx+batch_size]
-                bfs1 = list(map(lambda f: f[0], batch))
-                bfs2 = list(map(lambda f: f[1], batch))
-#                plt.imshow(bfs1[10] - bfs2[10])
-
                 res = self.sess.run(targets,
-                                    feed_dict={self.p_frames1: bfs1, self.p_frames2: bfs2, K.backend.learning_phase(): True})
+                                    feed_dict={self.p_inp_frames: inp_frames, self.p_tgt_frame: tgt_frames, K.backend.learning_phase(): True})
 
                 if 'summary' in res:
                     self.writer.add_summary(res['summary'], global_step=step)
@@ -178,11 +183,11 @@ def draw_frames(frames):
         vu.consume(fr)
 
 def experiment():
-    dyna = DynaModel(name)
+    dyna = DynaModelMF(name)
     dyna.restore()
 
     frames = []
-    for img in render_spiral_move(num_frames=8192):
+    for img in render_spiral_move(num_frames=1024):
         frames.append(np.array(img) / 512.0)
 
     rnd_rad_frames = []
@@ -215,13 +220,13 @@ def experiment():
         return pred_frames
 
 
-    dyna.train(rnd_rad_frames[:-1], frames[1:], on_epoch_finish=test_prediction, batch_size=64, num_epochs=100000)
+    dyna.train(rnd_rad_frames, frames, on_epoch_finish=test_prediction, batch_size=64, num_epochs=100000)
 
 
 def demo():
     m = 10
 
-    dyna = DynaModel(name)
+    dyna = DynaModelMF(name)
     dyna.restore()
 
     for i in range(100):
@@ -240,10 +245,26 @@ def demo():
             frame = dyna.predict(frame)
 
 
+def test():
+    dyna = DynaModelMF(name,5)
+    dyna.restore()
+
+    frames = []
+    for i in range(10):
+        frames.append(np.ones((IMG_SIZE, IMG_SIZE))*i)
+
+    rnd_rad_frames = []
+    for i in range(10):
+        rnd_rad_frames.append(np.ones((IMG_SIZE, IMG_SIZE)) * i * (-1))
+
+    dyna.train(rnd_rad_frames, frames, batch_size=3, num_epochs=100000)
+
+
 if __name__ == '__main__':
     try:
-        #experiment()
-        demo()
+        #test()
+        experiment()
+        #demo()
     finally:
         print("Closing video")
         vu.close()
