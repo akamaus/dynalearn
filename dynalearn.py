@@ -12,7 +12,7 @@ import tensorflow.contrib.keras as K
 
 import video_utils as VU
 
-IMG_SIZE=128
+IMG_SIZE = 128
 
 
 def polar_circle(angle, dist=IMG_SIZE / 2.5, radius=IMG_SIZE // 10):
@@ -22,8 +22,9 @@ def polar_circle(angle, dist=IMG_SIZE / 2.5, radius=IMG_SIZE // 10):
     return carthesian_circle(x, y, radius)
 
 
-def carthesian_circle(x, y, rad=IMG_SIZE//10):
-    img = PI.new('L', (IMG_SIZE, IMG_SIZE))
+def carthesian_circle(x, y, rad=IMG_SIZE//10, img=None):
+    if img is None:
+        img = PI.new('L', (IMG_SIZE, IMG_SIZE))
     draw = PD.Draw(img)
 
     hr = rad//2
@@ -67,7 +68,7 @@ class DynaModel:
         self.sess = tf.Session(config=cfg)
         self.sess.run(tf.global_variables_initializer())
 
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=20)
         self.writer = tf.summary.FileWriter(os.path.join('logs', self.name))
 
     def build_model(self, inp):
@@ -83,10 +84,9 @@ class DynaModel:
 #        x = K.layers.BatchNormalization()(x)
         x = K.layers.Conv2D(filters=2, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
 
-        # x = K.layers.Flatten()(x)
-        # x = K.layers.Dense(100)(x)
-        # x = K.layers.Dense(2 * IMG_SIZE ** 2 // 4 // 4 // 4)(x)
-        # x = K.layers.Reshape((IMG_SIZE // 8, IMG_SIZE // 8, 2))(x)
+        x = K.layers.Flatten()(x)
+        x = K.layers.Dense(512)(x)
+        x = K.layers.Reshape((IMG_SIZE // 8, IMG_SIZE // 8, 2))(x)
 
         x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
         x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
@@ -166,7 +166,11 @@ class DynaModel:
             print("Starting afresh")
 
 
-vu = VU.VideoWriter("dynamics.mp4", show=True)
+name = 'conv3_dense512_deconv3_fs8_ks3_spiral_noise'
+
+vu = VU.VideoWriter(name + ".mp4", show=True)
+
+
 def draw_frames(frames):
     global vu
 
@@ -174,19 +178,19 @@ def draw_frames(frames):
         vu.consume(fr)
 
 def experiment():
-    dyna = DynaModel('conv3_deconv3_fs8_ks3_spiral_std_1_noise0.01')
+    dyna = DynaModel(name)
     dyna.restore()
 
     frames = []
     for img in render_spiral_move(num_frames=8192):
-        frames.append(np.array(img) / 128.0)
+        frames.append(np.array(img) / 512.0)
 
     rnd_rad_frames = []
     for img in render_spiral_move(num_frames=8192, radius_mean=10, radius_std=1):
         noise = np.random.normal(0, 0.01, (IMG_SIZE, IMG_SIZE))
-        rnd_rad_frames.append(np.array(img) / 128.0 + noise)
+        rnd_rad_frames.append(np.array(img) / 512.0 * np.random.normal(1, 0.05) + noise)
 
-    #draw_frames(rnd_rad_frames)
+    #draw_frames(frames)
     #exit(0)
 
     def test_prediction(ep):
@@ -211,14 +215,35 @@ def experiment():
         return pred_frames
 
 
-    #draw_frames(frames[::10])
-
     dyna.train(rnd_rad_frames[:-1], frames[1:], on_epoch_finish=test_prediction, batch_size=64, num_epochs=100000)
+
+
+def demo():
+    m = 10
+
+    dyna = DynaModel(name)
+    dyna.restore()
+
+    for i in range(100):
+        img = None
+
+        for k in range(np.random.randint(1,5)):
+            x = np.random.randint(m, IMG_SIZE - m)
+            y = np.random.randint(m, IMG_SIZE - m)
+            img = carthesian_circle(x, y, rad=np.random.randint(8, 12), img=img)
+
+        frame = np.array(img) / 512
+
+        for i in range(20):
+            print(i)
+            vu.consume(frame)
+            frame = dyna.predict(frame)
 
 
 if __name__ == '__main__':
     try:
-        experiment()
+        #experiment()
+        demo()
     finally:
         print("Closing video")
         vu.close()
