@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import math
 import os
 import random
@@ -10,7 +11,9 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.keras as K
 
+from tqdm import tqdm
 import video_utils as VU
+
 
 IMG_SIZE = 128
 
@@ -93,16 +96,21 @@ class DynaModelMF:
         x = K.layers.Reshape((IMG_SIZE, IMG_SIZE))(x)
         return x
 
-    def predict(self, frame):
-        if np.ndim(frame) == 3:
-            expanded = True
-            frame = np.expand_dims(frame, axis=0)
-        elif np.ndim(frame) == 4:
-            expanded = False
+    def predict(self, inp_frames):
+        expanded = False
+        if isinstance(inp_frames, list) and np.ndim(inp_frames[0]) == 2: # this is a sequence of frames
+            inp_frames = np.stack(inp_frames, axis=2)
+        elif isinstance(inp_frames, np.ndarray) and np.ndim(inp_frames) in [3, 4]:  # already prepared frame stack
+            pass
         else:
             raise Exception("unknown dims")
 
-        res = self.sess.run(self.t_frame_predict, feed_dict={self.p_inp_frames: frame, K.backend.learning_phase(): False})
+        if np.ndim(inp_frames) == 3:
+            inp_frames = np.expand_dims(inp_frames, 0)
+            expanded = True
+
+        res = self.sess.run(self.t_frame_predict,
+                            feed_dict={self.p_inp_frames: inp_frames, K.backend.learning_phase(): False})
         res = np.maximum(np.minimum(res, 1), 0)
 
         if expanded:
@@ -114,27 +122,26 @@ class DynaModelMF:
         return self.sess.run(self.step)
 
     def train(self, inp_frames, tgt_frames, num_epochs=10, batch_size=8, on_epoch_finish=None):
-        frame_pile = np.stack(inp_frames)
-
         n = len(inp_frames)
-        inp_frame_seqs = []
-        for k in range(self.num_frames):
-            inp_frame_seqs.append(frame_pile[k:n - self.num_frames + k])
-        inp_frame_seqs.append(tgt_frames[k+1:n - self.num_frames + k + 1])
 
-        frames = np.stack(inp_frame_seqs)
-        frames = frames.transpose((1,2,3,0))
+        starts = list(range(n - self.num_frames - 1))
+        for ep in tqdm(range(num_epochs), ascii=True, desc='Epoch'):
+            random.shuffle(starts)
 
-        for ep in range(num_epochs):
-            np.random.shuffle(frames)
+            for si in range(0, len(starts), batch_size):
+                inp_batch = []
+                tgt_batch = []
 
-            num_batches = frames.shape[0] // batch_size
-            batches = frames[0:num_batches*batch_size]
+                for bi in range(0, batch_size):
+                    if si + bi >= len(starts):
+                        break
+                    fi = starts[si + bi]
 
-            print("Epoch", ep)
-            for batch in np.split(batches, batch_size):
-                inp_frames = batch[:, :, :, :-1]
-                tgt_frames = batch[:, :, :, -1]
+                    inp_frame = np.stack(list(map(lambda f: inp_frames[f], range(fi, fi+self.num_frames))), axis=2)
+                    tgt_frame = tgt_frames[fi + self.num_frames]
+
+                    inp_batch.append(inp_frame)
+                    tgt_batch.append(tgt_frame)
 
                 step = self.get_step()
                 targets = {'loss': self.loss, 'train_op': self.train_op}
@@ -142,7 +149,7 @@ class DynaModelMF:
                     targets['summary'] = tf.summary.merge_all()
 
                 res = self.sess.run(targets,
-                                    feed_dict={self.p_inp_frames: inp_frames, self.p_tgt_frame: tgt_frames, K.backend.learning_phase(): True})
+                                    feed_dict={self.p_inp_frames: inp_batch, self.p_tgt_frame: tgt_batch, K.backend.learning_phase(): True})
 
                 if 'summary' in res:
                     self.writer.add_summary(res['summary'], global_step=step)
@@ -157,7 +164,7 @@ class DynaModelMF:
         return os.path.join('models', self.name)
 
     def save(self):
-        print("Saved checkpoint")
+        tqdm.write("Saved checkpoint")
         path = self.checkpoint_dir()
         os.makedirs(path, exist_ok=True)
         self.saver.save(self.sess, os.path.join(path, 'model'))
@@ -186,12 +193,16 @@ def experiment():
     dyna = DynaModelMF(name)
     dyna.restore()
 
+    num_frames = 1024
+
     frames = []
-    for img in render_spiral_move(num_frames=1024):
+    for img in tqdm(render_spiral_move(num_frames=num_frames),
+                    desc='preparing frames', ascii=True):
         frames.append(np.array(img) / 512.0)
 
     rnd_rad_frames = []
-    for img in render_spiral_move(num_frames=8192, radius_mean=10, radius_std=1):
+    for img in tqdm(render_spiral_move(num_frames=num_frames, radius_mean=10, radius_std=1),
+                    desc='preparing distorted frames', ascii=True):
         noise = np.random.normal(0, 0.01, (IMG_SIZE, IMG_SIZE))
         rnd_rad_frames.append(np.array(img) / 512.0 * np.random.normal(1, 0.05) + noise)
 
@@ -202,23 +213,29 @@ def experiment():
         if ep % 5 != 0:
             return
 
-        episode = 500
+        episode = 50
 
         start_frame = random.randint(0, len(frames) - episode*2)
-        pred_one_step = dyna.predict(frames[start_frame: start_frame+episode])
-        pred_far = far_prediction(rnd_rad_frames[start_frame], episode)
+
+        pred_one_step = []
+        for f_i in range(start_frame, start_frame + episode):
+            pred_one_step.append(dyna.predict(frames[f_i: f_i+dyna.num_frames]))
+
+        pred_far = far_prediction(frames[start_frame: start_frame + dyna.num_frames], episode)
+
         gap = np.zeros((IMG_SIZE, 10), dtype=np.float32)
         draw_frames(map(lambda ps: np.concatenate([ps[0], gap, ps[1]], axis=1), zip(pred_one_step, pred_far)))
 
         dyna.save()
 
-    def far_prediction(fr, episode_len):
+    def far_prediction(frs, episode_len):
         pred_frames = []
         for i in range(episode_len):
-            fr = dyna.predict(fr)
+            fr = dyna.predict(frs)
             pred_frames.append(fr)
+            frs.append(fr)
+            frs = frs[1:]
         return pred_frames
-
 
     dyna.train(rnd_rad_frames, frames, on_epoch_finish=test_prediction, batch_size=64, num_epochs=100000)
 
@@ -237,6 +254,7 @@ def demo():
             y = np.random.randint(m, IMG_SIZE - m)
             img = carthesian_circle(x, y, rad=np.random.randint(8, 12), img=img)
 
+        raise Exception('Broken')
         frame = np.array(img) / 512
 
         for i in range(20):

@@ -11,7 +11,7 @@ let
     buildInputs =
     ( with pkgs;
       with self;
-    [
+    [ tqdm
       imageio
       ipython
       matplotlib
