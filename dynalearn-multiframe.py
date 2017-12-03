@@ -154,26 +154,31 @@ class Renderer:
     def new_frame(self):
         self.img = PI.new('L', (self.img_size, self.img_size))
 
-    def polar_circle(self, angle, dist, radius):
+    def polar_circle(self, angle, dist, radius, oblate):
         x = math.cos(angle) * dist + self.img_size / 2
         y = math.sin(angle) * dist + self.img_size / 2
 
-        self.carthesian_circle(x, y, radius)
+        self.carthesian_circle(x, y, radius, oblate)
 
-    def carthesian_circle(self, x, y, radius):
+    def carthesian_circle(self, x, y, radius, oblate):
         draw = PD.Draw(self.img)
 
         hr = radius // 2
-        draw.ellipse((x - hr, y - hr, x + hr, y + hr), fill='white', outline='white')
+        vr = hr * oblate
+        draw.ellipse((x - hr, y - vr, x + hr, y + vr), fill='white', outline='white')
 
-    def render_spiral_move(self, num_frames=10000, radius_mean=10, radius_std=0):
+    def render_spiral_move(self, num_frames=10000, radius_mean=10, radius_std=0, oblate_std=0):
         for frame in range(0, num_frames):
             rad = np.random.normal(radius_mean, radius_std)
             if rad <= 1:
                 rad = 1
+            obl = np.random.normal(1, oblate_std)
+            if obl < 0.01:
+                obl = 0.01
+
             self.new_frame()
             self.polar_circle(angle=frame * (2 * math.pi) / 100,
-                              dist=10 + (self.img_size / 2 - 20) / (1 + num_frames) * frame, radius=rad)
+                              dist=10 + (self.img_size / 2 - 20) / (1 + num_frames) * frame, radius=rad, oblate=obl)
             yield self.img
 
     # def render_linear_move(num_frames=100):
@@ -209,7 +214,7 @@ class Trainer:
             frames.append(np.array(img) / 512.0)
 
         rnd_rad_frames = []
-        for img in tqdm(self.renderer.render_spiral_move(num_frames=training_episode_len, radius_mean=10, radius_std=1),
+        for img in tqdm(self.renderer.render_spiral_move(num_frames=training_episode_len, radius_mean=10, radius_std=1, oblate_std=0.2),
                         desc='preparing distorted frames', ascii=True):
             noise = np.random.normal(0, 0.01, (self.renderer.img_size, self.renderer.img_size))
             rnd_rad_frames.append(np.array(img) / 512.0 * np.random.normal(1, 0.05) + noise)
