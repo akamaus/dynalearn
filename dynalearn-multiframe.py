@@ -178,8 +178,7 @@ class DynaModelMF:
             print("Starting afresh")
 
 
-name = 'conv3_dense512_deconv3_fs8_ks3_spiral_noise'
-
+name = 'fm_conv3_deconv3_fs8_ks3_spiral_noise'
 vu = VU.VideoWriter(name + ".mp4", show=True)
 
 
@@ -229,13 +228,11 @@ def experiment():
         dyna.save()
 
     def far_prediction(frs, episode_len):
-        pred_frames = []
         for i in range(episode_len):
             fr = dyna.predict(frs)
-            pred_frames.append(fr)
             frs.append(fr)
             frs = frs[1:]
-        return pred_frames
+            yield fr
 
     dyna.train(rnd_rad_frames, frames, on_epoch_finish=test_prediction, batch_size=64, num_epochs=100000)
 
@@ -246,21 +243,22 @@ def demo():
     dyna = DynaModelMF(name)
     dyna.restore()
 
+    def far_prediction(frs, episode_len):
+        for i in range(episode_len):
+            fr = dyna.predict(frs)
+            frs.append(fr)
+            frs = frs[1:]
+            yield fr
+
+    frames = []
+    for img in tqdm(render_spiral_move(num_frames=1000),
+                    desc='preparing frames', ascii=True):
+        frames.append(np.array(img) / 512.0)
+
     for i in range(100):
-        img = None
-
-        for k in range(np.random.randint(1,5)):
-            x = np.random.randint(m, IMG_SIZE - m)
-            y = np.random.randint(m, IMG_SIZE - m)
-            img = carthesian_circle(x, y, rad=np.random.randint(8, 12), img=img)
-
-        raise Exception('Broken')
-        frame = np.array(img) / 512
-
-        for i in range(20):
-            print(i)
+        s = random.randint(0, 500)
+        for frame in far_prediction(frames[s:s+dyna.num_frames], 500):
             vu.consume(frame)
-            frame = dyna.predict(frame)
 
 
 def test():
@@ -281,8 +279,8 @@ def test():
 if __name__ == '__main__':
     try:
         #test()
-        experiment()
-        #demo()
+        #experiment()
+        demo()
     finally:
         print("Closing video")
         vu.close()
