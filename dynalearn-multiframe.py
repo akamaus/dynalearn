@@ -16,53 +16,19 @@ from tqdm import tqdm
 import video_utils as VU
 
 
-IMG_SIZE = 128
-
-
-def polar_circle(angle, dist=IMG_SIZE / 2.5, radius=IMG_SIZE // 10):
-    x = math.cos(angle) * dist + IMG_SIZE/2
-    y = math.sin(angle) * dist + IMG_SIZE/2
-
-    return carthesian_circle(x, y, radius)
-
-
-def carthesian_circle(x, y, rad=IMG_SIZE//10, img=None):
-    if img is None:
-        img = PI.new('L', (IMG_SIZE, IMG_SIZE))
-    draw = PD.Draw(img)
-
-    hr = rad//2
-    draw.ellipse((x-hr, y-hr, x+hr, y+hr), fill='white', outline='white')
-    return img
-
-
-def render_spiral_move(num_frames=10000, radius_mean=10, radius_std=0):
-    for frame in range(0, num_frames):
-        rad = np.random.normal(radius_mean, radius_std)
-        if rad <= 1:
-            rad = 1
-        img = polar_circle(angle=frame * (2 * math.pi) / 100, dist=10 + (IMG_SIZE / 2 - 20) / (1 + num_frames) * frame, radius=rad)
-        yield img
-
-
-def render_linear_move(num_frames=100):
-    for fr in range(num_frames):
-        img = carthesian_circle(10 + (IMG_SIZE-20)/num_frames*fr, IMG_SIZE/2)
-        yield img
-
-
 class DynaModelMF:
-    def __init__(self, name=None, num_frames=2, num_filters=8):
+    def __init__(self, name, img_size, num_frames=2, num_filters=8):
         self.name = "mf%d_conv3_deconv3_fs%d_ks3" % (num_frames, num_filters)
         if name is not None:
             self.name = name + "_" +self.name
 
+        self.img_size = img_size
         self.num_filters = num_filters
         self.num_frames = num_frames
         self.step = tf.Variable(0, trainable=False, name='step')
 
-        inp_batch_sh = [None, IMG_SIZE, IMG_SIZE, num_frames]
-        out_batch_sh = [None, IMG_SIZE, IMG_SIZE]
+        inp_batch_sh = [None, img_size, img_size, num_frames]
+        out_batch_sh = [None, img_size, img_size]
 
         self.p_inp_frames = tf.placeholder(dtype=tf.float32, shape=inp_batch_sh)
         self.p_tgt_frame = tf.placeholder(dtype=tf.float32, shape=out_batch_sh)
@@ -98,7 +64,7 @@ class DynaModelMF:
         x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
         x = K.layers.Conv2DTranspose(filters=1, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
 
-        x = K.layers.Reshape((IMG_SIZE, IMG_SIZE))(x)
+        x = K.layers.Reshape((self.img_size, self.img_size))(x)
         return x
 
     def predict(self, inp_frames):
@@ -179,10 +145,49 @@ class DynaModelMF:
             print("Starting afresh")
 
 
+class Renderer:
+    def __init__(self, img_size):
+        self.img_size = img_size
+        self.img = None
+        self.new_frame()
+
+    def new_frame(self):
+        self.img = PI.new('L', (self.img_size, self.img_size))
+
+    def polar_circle(self, angle, dist, radius):
+        x = math.cos(angle) * dist + self.img_size / 2
+        y = math.sin(angle) * dist + self.img_size / 2
+
+        self.carthesian_circle(x, y, radius)
+
+    def carthesian_circle(self, x, y, radius):
+        draw = PD.Draw(self.img)
+
+        hr = radius // 2
+        draw.ellipse((x - hr, y - hr, x + hr, y + hr), fill='white', outline='white')
+
+    def render_spiral_move(self, num_frames=10000, radius_mean=10, radius_std=0):
+        for frame in range(0, num_frames):
+            rad = np.random.normal(radius_mean, radius_std)
+            if rad <= 1:
+                rad = 1
+            self.new_frame()
+            self.polar_circle(angle=frame * (2 * math.pi) / 100,
+                              dist=10 + (self.img_size / 2 - 20) / (1 + num_frames) * frame, radius=rad)
+            yield self.img
+
+    # def render_linear_move(num_frames=100):
+    #     for fr in range(num_frames):
+    #         img = carthesian_circle(10 + (IMG_SIZE - 20) / num_frames * fr, IMG_SIZE / 2)
+    #         yield img
+
+
 class Trainer:
     def __init__(self, args):
-        self.dyna = DynaModelMF(args.name, num_frames=args.num_frames, num_filters=args.num_filters)
+        self.dyna = DynaModelMF(args.name, args.img_size, num_frames=args.num_frames, num_filters=args.num_filters)
         self.dyna.restore()
+
+        self.renderer = Renderer(args.img_size)
 
         if args.video_name:
             video_name = args.video_name
@@ -199,14 +204,14 @@ class Trainer:
 
     def run_training(self, num_epochs, training_episode_len, test_episode_len, eval_period):
         frames = []
-        for img in tqdm(render_spiral_move(num_frames=training_episode_len),
+        for img in tqdm(self.renderer.render_spiral_move(num_frames=training_episode_len),
                         desc='preparing frames', ascii=True):
             frames.append(np.array(img) / 512.0)
 
         rnd_rad_frames = []
-        for img in tqdm(render_spiral_move(num_frames=training_episode_len, radius_mean=10, radius_std=1),
+        for img in tqdm(self.renderer.render_spiral_move(num_frames=training_episode_len, radius_mean=10, radius_std=1),
                         desc='preparing distorted frames', ascii=True):
-            noise = np.random.normal(0, 0.01, (IMG_SIZE, IMG_SIZE))
+            noise = np.random.normal(0, 0.01, (self.renderer.img_size, self.renderer.img_size))
             rnd_rad_frames.append(np.array(img) / 512.0 * np.random.normal(1, 0.05) + noise)
 
         try:
@@ -230,7 +235,7 @@ class Trainer:
 
         pred_far = self.far_prediction(frames[start_frame: start_frame + self.dyna.num_frames], episode)
 
-        gap = np.zeros((IMG_SIZE, 16), dtype=np.float32)
+        gap = np.zeros((self.renderer.img_size, 16), dtype=np.float32)
         self.draw_frames(map(lambda ps: np.concatenate([ps[0], gap, ps[1]], axis=1), zip(pred_one_step, pred_far)))
 
     def far_prediction(self, frs, episode_len):
@@ -242,7 +247,7 @@ class Trainer:
 
     def run_demo(self, num_episodes, episode_len):
         frames = []
-        for img in tqdm(render_spiral_move(num_frames=1000),
+        for img in tqdm(self.renderer.render_spiral_move(num_frames=1000),
                         desc='preparing frames', ascii=True):
             frames.append(np.array(img) / 512.0)
 
@@ -269,11 +274,13 @@ def test():
 
 
 parser = ArgumentParser()
-parser.add_argument('--name', default=None)
-parser.add_argument('--num-frames', type=int, default=2)
-parser.add_argument('--num-filters', type=int, default=8)
-parser.add_argument('--video-name', default=None, help='path to output video')
-parser.add_argument('--no-gui', dest='gui', default=True, action='store_false', help='path to output video')
+add_arg = parser.add_argument
+add_arg('--name', default=None)
+add_arg('--num-frames', type=int, default=2)
+add_arg('--num-filters', type=int, default=8)
+add_arg('--img-size', type=int, default=128)
+add_arg('--video-name', default=None, help='path to output video')
+add_arg('--no-gui', dest='gui', default=True, action='store_false', help='path to output video')
 
 cmds = parser.add_subparsers(dest='cmd')
 train_parser = cmds.add_parser('train', help='train on spirals')
