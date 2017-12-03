@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from argparse import ArgumentParser
 import math
 import os
 import random
@@ -51,8 +52,12 @@ def render_linear_move(num_frames=100):
 
 
 class DynaModelMF:
-    def __init__(self, name, num_frames=2):
-        self.name = name
+    def __init__(self, name=None, num_frames=2, num_filters=8):
+        self.name = "mf%d_conv3_deconv3_fs%d_ks3" % (num_frames, num_filters)
+        if name is not None:
+            self.name = name + "_" +self.name
+
+        self.num_filters = num_filters
         self.num_frames = num_frames
         self.step = tf.Variable(0, trainable=False, name='step')
 
@@ -78,7 +83,7 @@ class DynaModelMF:
 
     def build_model(self, inp):
         ks = 3
-        fs = 8
+        fs = self.num_filters
 
         x = K.layers.Input(tensor=inp)
         x = K.layers.Conv2D(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
@@ -121,51 +126,47 @@ class DynaModelMF:
     def get_step(self):
         return self.sess.run(self.step)
 
-    def train(self, inp_frames, tgt_frames, num_epochs=10, batch_size=8, on_epoch_finish=None):
+    def train_for_epoch(self, inp_frames, tgt_frames, batch_size=8):
         n = len(inp_frames)
 
         starts = list(range(n - self.num_frames - 1))
-        for ep in tqdm(range(num_epochs), ascii=True, desc='Epoch'):
-            random.shuffle(starts)
+        random.shuffle(starts)
 
-            for si in range(0, len(starts), batch_size):
-                inp_batch = []
-                tgt_batch = []
+        for si in range(0, len(starts), batch_size):
+            inp_batch = []
+            tgt_batch = []
 
-                for bi in range(0, batch_size):
-                    if si + bi >= len(starts):
-                        break
-                    fi = starts[si + bi]
+            for bi in range(0, batch_size):
+                if si + bi >= len(starts):
+                    break
+                fi = starts[si + bi]
 
-                    inp_frame = np.stack(list(map(lambda f: inp_frames[f], range(fi, fi+self.num_frames))), axis=2)
-                    tgt_frame = tgt_frames[fi + self.num_frames]
+                inp_frame = np.stack(list(map(lambda f: inp_frames[f], range(fi, fi+self.num_frames))), axis=2)
+                tgt_frame = tgt_frames[fi + self.num_frames]
 
-                    inp_batch.append(inp_frame)
-                    tgt_batch.append(tgt_frame)
+                inp_batch.append(inp_frame)
+                tgt_batch.append(tgt_frame)
 
-                step = self.get_step()
-                targets = {'loss': self.loss, 'train_op': self.train_op}
-                if step % 10 == 0:
-                    targets['summary'] = tf.summary.merge_all()
+            step = self.get_step()
+            targets = {'loss': self.loss, 'train_op': self.train_op}
+            if step % 10 == 0:
+                targets['summary'] = tf.summary.merge_all()
 
-                res = self.sess.run(targets,
-                                    feed_dict={self.p_inp_frames: inp_batch, self.p_tgt_frame: tgt_batch, K.backend.learning_phase(): True})
+            res = self.sess.run(targets,
+                                feed_dict={self.p_inp_frames: inp_batch, self.p_tgt_frame: tgt_batch, K.backend.learning_phase(): True})
 
-                if 'summary' in res:
-                    self.writer.add_summary(res['summary'], global_step=step)
+            if 'summary' in res:
+                self.writer.add_summary(res['summary'], global_step=step)
 
-                if step % 100 == 0:
-                    print('iter', step, 'loss', res['loss'])
-
-            if on_epoch_finish:
-                on_epoch_finish(ep)
+        tqdm.write('iter: %d; loss: %f' % (step, res['loss']))
 
     def checkpoint_dir(self):
         return os.path.join('models', self.name)
 
     def save(self):
-        tqdm.write("Saved checkpoint")
         path = self.checkpoint_dir()
+        tqdm.write("Saved checkpoint %s" % path)
+
         os.makedirs(path, exist_ok=True)
         self.saver.save(self.sess, os.path.join(path, 'model'))
 
@@ -178,91 +179,82 @@ class DynaModelMF:
             print("Starting afresh")
 
 
-name = 'fm_conv3_deconv3_fs8_ks3_spiral_noise'
-vu = VU.VideoWriter(name + ".mp4", show=True)
+class Trainer:
+    def __init__(self, args):
+        self.dyna = DynaModelMF(args.name, num_frames=args.num_frames, num_filters=args.num_filters)
+        self.dyna.restore()
 
+        if args.video_name:
+            video_name = args.video_name
+        else:
+            video_name = self.dyna.name
+        video_name += '.mp4'
 
-def draw_frames(frames):
-    global vu
+        self.vu = VU.VideoWriter(video_name, show=args.gui)
 
-    for fr in frames:
-        vu.consume(fr)
+    def draw_frames(self, frames):
+        """ Render some frames """
+        for fr in frames:
+            self.vu.consume(fr)
 
-def experiment():
-    dyna = DynaModelMF(name)
-    dyna.restore()
+    def run_training(self, num_epochs, training_episode_len, test_episode_len, eval_period):
+        frames = []
+        for img in tqdm(render_spiral_move(num_frames=training_episode_len),
+                        desc='preparing frames', ascii=True):
+            frames.append(np.array(img) / 512.0)
 
-    num_frames = 1024
+        rnd_rad_frames = []
+        for img in tqdm(render_spiral_move(num_frames=training_episode_len, radius_mean=10, radius_std=1),
+                        desc='preparing distorted frames', ascii=True):
+            noise = np.random.normal(0, 0.01, (IMG_SIZE, IMG_SIZE))
+            rnd_rad_frames.append(np.array(img) / 512.0 * np.random.normal(1, 0.05) + noise)
 
-    frames = []
-    for img in tqdm(render_spiral_move(num_frames=num_frames),
-                    desc='preparing frames', ascii=True):
-        frames.append(np.array(img) / 512.0)
+        try:
+            for ep in tqdm(range(num_epochs), ascii=True, desc='Epoch'):
+                self.dyna.train_for_epoch(rnd_rad_frames, frames, batch_size=64)
+                if ep % eval_period == 0:
+                    self.test_episode(frames, test_episode_len)
+                    self.dyna.save()
 
-    rnd_rad_frames = []
-    for img in tqdm(render_spiral_move(num_frames=num_frames, radius_mean=10, radius_std=1),
-                    desc='preparing distorted frames', ascii=True):
-        noise = np.random.normal(0, 0.01, (IMG_SIZE, IMG_SIZE))
-        rnd_rad_frames.append(np.array(img) / 512.0 * np.random.normal(1, 0.05) + noise)
+        finally:
+            self.vu.close()
 
-    #draw_frames(frames)
-    #exit(0)
-
-    def test_prediction(ep):
-        if ep % 5 != 0:
-            return
-
-        episode = 50
+    def test_episode(self, frames, episode_len):
+        episode = episode_len
 
         start_frame = random.randint(0, len(frames) - episode*2)
 
         pred_one_step = []
         for f_i in range(start_frame, start_frame + episode):
-            pred_one_step.append(dyna.predict(frames[f_i: f_i+dyna.num_frames]))
+            pred_one_step.append(self.dyna.predict(frames[f_i: f_i+self.dyna.num_frames]))
 
-        pred_far = far_prediction(frames[start_frame: start_frame + dyna.num_frames], episode)
+        pred_far = self.far_prediction(frames[start_frame: start_frame + self.dyna.num_frames], episode)
 
-        gap = np.zeros((IMG_SIZE, 10), dtype=np.float32)
-        draw_frames(map(lambda ps: np.concatenate([ps[0], gap, ps[1]], axis=1), zip(pred_one_step, pred_far)))
+        gap = np.zeros((IMG_SIZE, 16), dtype=np.float32)
+        self.draw_frames(map(lambda ps: np.concatenate([ps[0], gap, ps[1]], axis=1), zip(pred_one_step, pred_far)))
 
-        dyna.save()
-
-    def far_prediction(frs, episode_len):
+    def far_prediction(self, frs, episode_len):
         for i in range(episode_len):
-            fr = dyna.predict(frs)
+            fr = self.dyna.predict(frs)
             frs.append(fr)
             frs = frs[1:]
             yield fr
 
-    dyna.train(rnd_rad_frames, frames, on_epoch_finish=test_prediction, batch_size=64, num_epochs=100000)
+    def run_demo(self, num_episodes, episode_len):
+        frames = []
+        for img in tqdm(render_spiral_move(num_frames=1000),
+                        desc='preparing frames', ascii=True):
+            frames.append(np.array(img) / 512.0)
 
-
-def demo():
-    m = 10
-
-    dyna = DynaModelMF(name)
-    dyna.restore()
-
-    def far_prediction(frs, episode_len):
-        for i in range(episode_len):
-            fr = dyna.predict(frs)
-            frs.append(fr)
-            frs = frs[1:]
-            yield fr
-
-    frames = []
-    for img in tqdm(render_spiral_move(num_frames=1000),
-                    desc='preparing frames', ascii=True):
-        frames.append(np.array(img) / 512.0)
-
-    for i in range(100):
-        s = random.randint(0, 500)
-        for frame in far_prediction(frames[s:s+dyna.num_frames], 500):
-            vu.consume(frame)
+        for ep in tqdm(range(num_episodes), desc='Episode', ascii=True):
+                s = random.randint(0, 500)
+                for frame in tqdm(self.far_prediction(frames[s:s+self.dyna.num_frames], episode_len),
+                                  desc='Frame', ascii=True):
+                    self.vu.consume(frame)
 
 
 def test():
-    dyna = DynaModelMF(name,5)
+    dyna = DynaModelMF('tst', 5)
     dyna.restore()
 
     frames = []
@@ -273,14 +265,40 @@ def test():
     for i in range(10):
         rnd_rad_frames.append(np.ones((IMG_SIZE, IMG_SIZE)) * i * (-1))
 
-    dyna.train(rnd_rad_frames, frames, batch_size=3, num_epochs=100000)
+    dyna.train_for_epoch(rnd_rad_frames, frames, batch_size=3, num_epochs=100000)
 
+
+parser = ArgumentParser()
+parser.add_argument('--name', default=None)
+parser.add_argument('--num-frames', type=int, default=2)
+parser.add_argument('--num-filters', type=int, default=8)
+parser.add_argument('--video-name', default=None, help='path to output video')
+parser.add_argument('--no-gui', dest='gui', default=True, action='store_false', help='path to output video')
+
+cmds = parser.add_subparsers(dest='cmd')
+train_parser = cmds.add_parser('train', help='train on spirals')
+add_arg = train_parser.add_argument
+add_arg('--num-epochs', type=int, default=1000)
+add_arg('--training-episode-len', type=int, default=1000)
+add_arg('--test-episode-len', type=int, default=100)
+add_arg('--eval-period', type=int, default=5, help='number of epochs before evaluation')
+
+demo_parser = cmds.add_parser('demo', help='run demo')
+add_arg = demo_parser.add_argument
+add_arg('--num-episodes', type=int, default=3)
+add_arg('--episode-len', type=int, default=1000)
 
 if __name__ == '__main__':
-    try:
-        #test()
-        #experiment()
-        demo()
-    finally:
-        print("Closing video")
-        vu.close()
+    args = parser.parse_args()
+    tr = Trainer(args)
+
+    if args.cmd == 'train':
+        tr.run_training(training_episode_len=args.training_episode_len,
+                        test_episode_len=args.test_episode_len,
+                        num_epochs=args.num_epochs,
+                        eval_period=args.eval_period)
+    elif args.cmd == 'demo':
+        tr.run_demo(num_episodes=args.num_episodes,
+                    episode_len=args.episode_len)
+    else:
+        raise(Exception('unknown command'))
