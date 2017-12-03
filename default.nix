@@ -19,6 +19,7 @@ let
       pillow
       pyqt5
       python
+      pytorch	
       tensorflowWithCuda
     ]);
 

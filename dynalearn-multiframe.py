@@ -9,140 +9,39 @@ import PIL.ImageDraw as PD
 import matplotlib.pyplot as plt
 import numpy as np
 
-import tensorflow as tf
-import tensorflow.contrib.keras as K
+import torch
+import torch.nn as nn
+import torch.autograd as AG
 
 from tqdm import tqdm
 import video_utils as VU
 
 
-class DynaModelMF:
-    def __init__(self, name, img_size, num_frames=2, num_filters=8):
-        self.name = "mf%d_conv3_deconv3_fs%d_ks3" % (num_frames, num_filters)
-        if name is not None:
-            self.name = name + "_" +self.name
+class DynaModel(nn.Module):
+    def __init__(self, name, num_frames=2, num_filters=8):
+        super(DynaModel, self).__init__()
 
-        self.img_size = img_size
-        self.num_filters = num_filters
-        self.num_frames = num_frames
-        self.step = tf.Variable(0, trainable=False, name='step')
+        self.conv1 = nn.Conv2d(num_frames, num_filters, kernel_size=3, stride=2)
+        self.conv2 = nn.Conv2d(num_filters, num_filters, kernel_size=3, stride=2)
+        self.conv3 = nn.Conv2d(num_filters, 2, kernel_size=3, stride=2)
 
-        inp_batch_sh = [None, img_size, img_size, num_frames]
-        out_batch_sh = [None, img_size, img_size]
+        self.deconv1 = nn.ConvTranspose2d(2, num_filters, kernel_size=3, stride=2)
+        self.deconv2 = nn.ConvTranspose2d(num_filters, num_filters, kernel_size=3, stride=2)
+        self.deconv3 = nn.ConvTranspose2d(num_filters, 1, kernel_size=3, stride=2)
 
-        self.p_inp_frames = tf.placeholder(dtype=tf.float32, shape=inp_batch_sh)
-        self.p_tgt_frame = tf.placeholder(dtype=tf.float32, shape=out_batch_sh)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                torch.nn.init.xavier_uniform(m.weight.data)
 
-        self.t_frame_predict = self.build_model(self.p_inp_frames)
+    def forward(self, batch_inp):
+        x = self.conv1(batch_inp)
+        x = self.conv2(x)
+        x = self.conv3(x)
 
-        self.loss = tf.losses.mean_squared_error(self.t_frame_predict, self.p_tgt_frame)
-        tf.summary.scalar('loss', self.loss)
-        self.train_op = tf.train.AdamOptimizer(learning_rate=0.0001).minimize(self.loss, global_step=self.step)
-
-        cfg = tf.ConfigProto()
-        cfg.gpu_options.allow_growth = True
-        self.sess = tf.Session(config=cfg)
-        self.sess.run(tf.global_variables_initializer())
-
-        self.saver = tf.train.Saver(max_to_keep=20)
-        self.writer = tf.summary.FileWriter(os.path.join('logs', self.name))
-
-    def build_model(self, inp):
-        ks = 3
-        fs = self.num_filters
-
-        x = K.layers.Input(tensor=inp)
-        x = K.layers.Conv2D(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
-        x = K.layers.Conv2D(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
-        x = K.layers.Conv2D(filters=2, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
-
-        # x = K.layers.Flatten()(x)
-        # x = K.layers.Dense(512)(x)
-        # x = K.layers.Reshape((IMG_SIZE // 8, IMG_SIZE // 8, 2))(x)
-
-        x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
-        x = K.layers.Conv2DTranspose(filters=fs, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
-        x = K.layers.Conv2DTranspose(filters=1, kernel_size=ks, strides=2, activation='relu', padding='same')(x)
-
-        x = K.layers.Reshape((self.img_size, self.img_size))(x)
+        x = self.deconv1(x)
+        x = self.deconv2(x)
+        x = self.deconv3(x)
         return x
-
-    def predict(self, inp_frames):
-        expanded = False
-        if isinstance(inp_frames, list) and np.ndim(inp_frames[0]) == 2: # this is a sequence of frames
-            inp_frames = np.stack(inp_frames, axis=2)
-        elif isinstance(inp_frames, np.ndarray) and np.ndim(inp_frames) in [3, 4]:  # already prepared frame stack
-            pass
-        else:
-            raise Exception("unknown dims")
-
-        if np.ndim(inp_frames) == 3:
-            inp_frames = np.expand_dims(inp_frames, 0)
-            expanded = True
-
-        res = self.sess.run(self.t_frame_predict,
-                            feed_dict={self.p_inp_frames: inp_frames, K.backend.learning_phase(): False})
-        res = np.maximum(np.minimum(res, 1), 0)
-
-        if expanded:
-            res = np.squeeze(res, axis=0)
-
-        return res
-
-    def get_step(self):
-        return self.sess.run(self.step)
-
-    def train_for_epoch(self, inp_frames, tgt_frames, batch_size=8):
-        n = len(inp_frames)
-
-        starts = list(range(n - self.num_frames - 1))
-        random.shuffle(starts)
-
-        for si in range(0, len(starts), batch_size):
-            inp_batch = []
-            tgt_batch = []
-
-            for bi in range(0, batch_size):
-                if si + bi >= len(starts):
-                    break
-                fi = starts[si + bi]
-
-                inp_frame = np.stack(list(map(lambda f: inp_frames[f], range(fi, fi+self.num_frames))), axis=2)
-                tgt_frame = tgt_frames[fi + self.num_frames]
-
-                inp_batch.append(inp_frame)
-                tgt_batch.append(tgt_frame)
-
-            step = self.get_step()
-            targets = {'loss': self.loss, 'train_op': self.train_op}
-            if step % 10 == 0:
-                targets['summary'] = tf.summary.merge_all()
-
-            res = self.sess.run(targets,
-                                feed_dict={self.p_inp_frames: inp_batch, self.p_tgt_frame: tgt_batch, K.backend.learning_phase(): True})
-
-            if 'summary' in res:
-                self.writer.add_summary(res['summary'], global_step=step)
-
-        tqdm.write('iter: %d; loss: %f' % (step, res['loss']))
-
-    def checkpoint_dir(self):
-        return os.path.join('models', self.name)
-
-    def save(self):
-        path = self.checkpoint_dir()
-        tqdm.write("Saved checkpoint %s" % path)
-
-        os.makedirs(path, exist_ok=True)
-        self.saver.save(self.sess, os.path.join(path, 'model'))
-
-    def restore(self):
-        path = tf.train.latest_checkpoint(self.checkpoint_dir())
-        if path:
-            print("Restoring checkpoint", path)
-            self.saver.restore(self.sess, path)
-        else:
-            print("Starting afresh")
 
 
 class Renderer:
@@ -189,18 +88,23 @@ class Renderer:
 
 class Trainer:
     def __init__(self, args):
-        self.dyna = DynaModelMF(args.name, args.img_size, num_frames=args.num_frames, num_filters=args.num_filters)
-        self.dyna.restore()
+        self.name = args.name
+        self.num_frames = args.num_frames
+        self.img_size = args.img_size
 
+        self.dyna = DynaModel(args.name, num_frames=args.num_frames, num_filters=args.num_filters)
         self.renderer = Renderer(args.img_size)
 
         if args.video_name:
             video_name = args.video_name
         else:
-            video_name = self.dyna.name
+            video_name = args.name
         video_name += '.mp4'
 
         self.vu = VU.VideoWriter(video_name, show=args.gui)
+
+    def checkpoint_path(self):
+        return os.path.join('models', self.name + ".pth")
 
     def draw_frames(self, frames):
         """ Render some frames """
@@ -221,10 +125,10 @@ class Trainer:
 
         try:
             for ep in tqdm(range(num_epochs), ascii=True, desc='Epoch'):
-                self.dyna.train_for_epoch(rnd_rad_frames, frames, batch_size=64)
+                self.train_for_epoch(rnd_rad_frames, frames, batch_size=64)
                 if ep % eval_period == 0:
                     self.test_episode(frames, test_episode_len)
-                    self.dyna.save()
+                    torch.save(self.dyna, self.checkpoint_path())
 
         finally:
             self.vu.close()
@@ -236,16 +140,16 @@ class Trainer:
 
         pred_one_step = []
         for f_i in range(start_frame, start_frame + episode):
-            pred_one_step.append(self.dyna.predict(frames[f_i: f_i+self.dyna.num_frames]))
+            pred_one_step.append(self.predict(frames[f_i: f_i+self.num_frames]))
 
-        pred_far = self.far_prediction(frames[start_frame: start_frame + self.dyna.num_frames], episode)
+        pred_far = self.far_prediction(frames[start_frame: start_frame + self.num_frames], episode)
 
         gap = np.zeros((self.renderer.img_size, 16), dtype=np.float32)
         self.draw_frames(map(lambda ps: np.concatenate([ps[0], gap, ps[1]], axis=1), zip(pred_one_step, pred_far)))
 
     def far_prediction(self, frs, episode_len):
         for i in range(episode_len):
-            fr = self.dyna.predict(frs)
+            fr = self.predict(frs)
             frs.append(fr)
             frs = frs[1:]
             yield fr
@@ -258,9 +162,68 @@ class Trainer:
 
         for ep in tqdm(range(num_episodes), desc='Episode', ascii=True):
                 s = random.randint(0, 500)
-                for frame in tqdm(self.far_prediction(frames[s:s+self.dyna.num_frames], episode_len),
+                for frame in tqdm(self.far_prediction(frames[s:s+self.num_frames], episode_len),
                                   desc='Frame', ascii=True):
                     self.vu.consume(frame)
+
+    def train_for_epoch(self, inp_frames, tgt_frames, batch_size=8):
+        import torch.optim
+
+        opt = torch.optim.Adam(self.dyna.parameters(), lr=0.0001)
+
+        n = len(inp_frames)
+
+        starts = list(range(n - self.num_frames - 1))
+        random.shuffle(starts)
+
+        for si in range(0, len(starts), batch_size):
+            inp_batch = []
+            tgt_batch = []
+
+            for bi in range(0, batch_size):
+                if si + bi >= len(starts):
+                    break
+                fi = starts[si + bi]
+
+                inp_frame = np.stack(list(map(lambda f: inp_frames[f], range(fi, fi+self.num_frames))), axis=2)
+                tgt_frame = tgt_frames[fi + self.num_frames]
+
+                inp_batch.append(inp_frame)
+                tgt_batch.append(tgt_frame)
+
+            x = AG.Variable(torch.Tensor(np.array(inp_batch).transpose([0,3,1,2])))
+            y = self.dyna(x)
+            y_truth = AG.Variable(torch.Tensor(np.array(tgt_batch)[:, None, :, :]))
+            loss = torch.mean((y - y_truth)**2)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
+            loss = loss.data.numpy()[0]
+
+        tqdm.write('loss: %f' % loss)
+
+    def predict(self, inp_frames):
+        expanded = False
+        if isinstance(inp_frames, list) and np.ndim(inp_frames[0]) == 2: # this is a sequence of frames
+            inp_frames = np.stack(inp_frames, axis=2)
+        elif isinstance(inp_frames, np.ndarray) and np.ndim(inp_frames) in [3, 4]:  # already prepared frame stack
+            pass
+        else:
+            raise Exception("unknown dims")
+
+        if np.ndim(inp_frames) == 3:
+            inp_frames = np.expand_dims(inp_frames, 0)
+            expanded = True
+
+        res = self.dyna(AG.Variable(torch.Tensor(inp_frames.transpose([0,3,1,2]))))
+        res = res.data.numpy() # .transpose([0,3,1,2])
+        res = np.maximum(np.minimum(res, 1), 0)
+
+        if expanded:
+            res = res[0,0]
+
+        return res
 
 
 def test():
@@ -283,7 +246,7 @@ add_arg = parser.add_argument
 add_arg('--name', default=None)
 add_arg('--num-frames', type=int, default=2)
 add_arg('--num-filters', type=int, default=8)
-add_arg('--img-size', type=int, default=128)
+add_arg('--img-size', type=int, default=127)
 add_arg('--video-name', default=None, help='path to output video')
 add_arg('--no-gui', dest='gui', default=True, action='store_false', help='path to output video')
 
