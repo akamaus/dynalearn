@@ -34,14 +34,14 @@ class LinearModel(nn.Module):
         x = x.view(s)
         return x
 
-# model = LinearModel().cuda()
+model = LinearModel().cuda()
 
-model = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(1, 8, 3, 2), nn.ReLU(),
-                      nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(8, 16, 3, 2), nn.ReLU(),
-                      nn.Conv2d(16, 32, 3, 2), nn.ReLU(),
-                      nn.ConvTranspose2d(32, 16, 3, 2), nn.ReLU(),
-                      nn.ConvTranspose2d(16, 8, 3, 2), nn.ZeroPad2d((0, -1, 0, -1)), nn.ReLU(),
-                      nn.ConvTranspose2d(8, 1, 3, 2), nn.ZeroPad2d((0, -1, 0, -1)), nn.ReLU()).cuda()
+# model = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(1, 8, 3, 2), nn.ReLU(),
+#                       nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(8, 16, 3, 2), nn.ReLU(),
+#                       nn.Conv2d(16, 32, 3, 2), nn.ReLU(),
+#                       nn.ConvTranspose2d(32, 16, 3, 2), nn.ReLU(),
+#                       nn.ConvTranspose2d(16, 8, 3, 2), nn.ZeroPad2d((0, -1, 0, -1)), nn.ReLU(),
+#                       nn.ConvTranspose2d(8, 1, 3, 2), nn.ZeroPad2d((0, -1, 0, -1)), nn.ReLU()).cuda()
 
 
 for m in model.modules():
@@ -63,9 +63,11 @@ for ep in range(1000):
         loss = T.mean((out - tgt)**2)
         loss.backward()
         opt.step()
-        if ep % 10 == 0:
-            print('ep %d; loss %f' % (ep, loss.cpu().data))
-            t_inp, t_tgt = dataset[0]
-            t_out = model(T.unsqueeze(Variable(t_inp), 0)).data[0]
-            frame = T.cat([t_out, t_tgt, T.zeros_like(t_out)]).cpu()
-            vu.consume(frame.numpy().transpose(1,2,0))
+
+    if ep % 10 == 0:
+        print('ep %d; loss %f' % (ep, loss.cpu().data))
+        t_inp, t_tgt = dataset[:]
+        s = t_inp.size()
+        t_out = model(Variable(t_inp)).data
+        frame = T.cat([t_out, t_tgt, T.zeros_like(t_out)], dim=1).cpu().permute(1,2,0,3).contiguous().view([3, s[2], s[3]*s[0]])
+        vu.consume(frame.numpy().transpose(1,2,0))
