@@ -93,6 +93,12 @@ class Trainer:
         self.img_size = args.img_size
 
         self.dyna = DynaModel(args.name, num_frames=args.num_frames, num_filters=args.num_filters)
+        self.tensor = torch.FloatTensor(1)
+        if args.cuda:
+            print("Using Cuda")
+            self.dyna = self.dyna.cuda()
+            self.tensor = self.tensor.cuda()
+
         self.renderer = Renderer(args.img_size)
 
         if args.video_name:
@@ -191,15 +197,15 @@ class Trainer:
                 inp_batch.append(inp_frame)
                 tgt_batch.append(tgt_frame)
 
-            x = AG.Variable(torch.Tensor(np.array(inp_batch).transpose([0,3,1,2])))
+            x = AG.Variable(self.tensor.new(np.array(inp_batch).transpose([0,3,1,2])))
             y = self.dyna(x)
-            y_truth = AG.Variable(torch.Tensor(np.array(tgt_batch)[:, None, :, :]))
+            y_truth = AG.Variable(self.tensor.new(np.array(tgt_batch)[:, None, :, :]))
             loss = torch.mean((y - y_truth)**2)
             opt.zero_grad()
             loss.backward()
             opt.step()
 
-            loss = loss.data.numpy()[0]
+            loss = loss.cpu().data.numpy()[0]
 
         tqdm.write('loss: %f' % loss)
 
@@ -216,8 +222,8 @@ class Trainer:
             inp_frames = np.expand_dims(inp_frames, 0)
             expanded = True
 
-        res = self.dyna(AG.Variable(torch.Tensor(inp_frames.transpose([0,3,1,2]))))
-        res = res.data.numpy() # .transpose([0,3,1,2])
+        res = self.dyna(AG.Variable(self.tensor.new(inp_frames.transpose([0,3,1,2]))))
+        res = res.data.cpu().numpy() # .transpose([0,3,1,2])
         res = np.maximum(np.minimum(res, 1), 0)
 
         if expanded:
@@ -248,6 +254,7 @@ add_arg('--num-frames', type=int, default=2)
 add_arg('--num-filters', type=int, default=8)
 add_arg('--img-size', type=int, default=127)
 add_arg('--video-name', default=None, help='path to output video')
+add_arg('--no-cuda', dest='cuda', default=True, action='store_false')
 add_arg('--no-gui', dest='gui', default=True, action='store_false', help='path to output video')
 
 cmds = parser.add_subparsers(dest='cmd')

@@ -19,8 +19,9 @@ let
       pillow
       pyqt5
       python
-      pytorch	
-      tensorflowWithCuda
+      pytorchWithCuda
+      torchvision
+      tensorflowWithoutCuda
     ]);
 
     shellHook = with pkgs;
