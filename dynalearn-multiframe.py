@@ -11,6 +11,7 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.autograd as AG
 
 from tqdm import tqdm
@@ -34,12 +35,12 @@ class DynaModel(nn.Module):
                 torch.nn.init.xavier_uniform(m.weight.data)
 
     def forward(self, batch_inp):
-        x = self.conv1(batch_inp)
-        x = self.conv2(x)
-        x = self.conv3(x)
+        x = F.relu(self.conv1(batch_inp))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
 
-        x = self.deconv1(x)
-        x = self.deconv2(x)
+        x = F.relu(self.deconv1(x))
+        x = F.relu(self.deconv2(x))
         x = self.deconv3(x)
         return x
 
