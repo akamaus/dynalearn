@@ -30,6 +30,7 @@ loader = T.utils.data.DataLoader(dataset, batch_size=4, shuffle=True)
 
 fs = 8
 
+
 class LinearModel(nn.Module):
     def __init__(self, l2):
         super(LinearModel, self).__init__()
@@ -54,8 +55,8 @@ class ConvModel(nn.Module):
         self.conv2 = nn.Conv2d(8, 16, 3, 2)
         self.conv3 = nn.Conv2d(16, 32, 3, 2)
 
-        s = 3
-        self.lin1 = nn.Linear(32*s*s, 32*s*s)
+        s = 7
+        self.lin1 = nn.Linear(16*s*s, 16*s*s)
 
         self.tconv3 = nn.ConvTranspose2d(32, 16, 3, 2)
         self.tconv2 = nn.ConvTranspose2d(16, 8, 3, 2)
@@ -64,12 +65,12 @@ class ConvModel(nn.Module):
     def forward(self, x):
         x = self.r(self.conv1(self.pos_pad(x)))
         x = self.r(self.conv2(self.pos_pad(x)))
-        x = self.r(self.conv3(x))
+#        x = self.r(self.conv3(x))
 
         s = x.size()
         x = self.r(self.lin1(x.view([s[0], -1]))).view(s)
 
-        x = self.r(self.tconv3(x))
+#        x = self.r(self.tconv3(x))
         x = self.r(self.neg_pad(self.tconv2(x)))
         x = self.r(self.neg_pad(self.tconv1(x)))
         return x
@@ -83,27 +84,33 @@ for m in model.modules():
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
         nn.init.xavier_uniform(m.weight.data)
 
-opt = T.optim.Adam(params=model.parameters(), lr=0.0001)
+opt = T.optim.Adam(params=model.parameters(), lr=0.01)
+#opt = T.optim.SGD(params=model.parameters(), lr=0.0001, momentum=0.8, nesterov=True)
 
 vu = VU.VideoWriter('tst.mp4', show=True)
 losses = []
 losses_std = []
 
+num_epochs = 1000
+
 smpl = T.unsqueeze(samples[0], 0)
-for ep in range(1000):
+for ep in range(num_epochs):
     outs = []
     loop_losses = []
     for si in range(num_digits):
-        if ep < 120:
+        if ep < num_epochs-600:
             smpl = T.unsqueeze(samples[si], 0)
+
+        smpl += (T.rand(smpl.size())*0.001 - 0.0005).cuda()
         inp = Variable(smpl)
         tgt = Variable(T.unsqueeze(targets[si], 0))
 
         opt.zero_grad()
         out = model(inp)
         loss = T.mean((out - tgt)**2)
-        loss.backward()
-        opt.step()
+        if ep < num_epochs - 300:
+            loss.backward()
+            opt.step()
 
         loop_losses.append(loss.cpu().data)
         outs.append(out.data.cpu()[0])
@@ -111,14 +118,16 @@ for ep in range(1000):
 
     losses.append(np.mean(loop_losses))
     losses_std.append(np.std(loop_losses))
-    print('ep %d; loss %f +- %f' % (ep, losses[-1], losses_std[-1]))
-    t_outs = T.stack(outs, 0)
-    t_tgts = T.stack(targets).cpu()
 
-    sz = samples[0].size()
-    frame = T.cat([t_outs, t_tgts, T.zeros_like(t_outs)], dim=1).permute(1,2,0,3).contiguous().view([3, sz[1], sz[2] * len(outs)])
-    n_frame = (frame.permute(1,2,0).clamp(min=0, max=1) * 255).numpy().astype(np.uint8)
-    vu.consume(n_frame)
+    if ep % 5 == 0:
+        print('ep %d; loss %f +- %f' % (ep, losses[-1], losses_std[-1]))
+        t_outs = T.stack(outs, 0)
+        t_tgts = T.stack(targets).cpu()
+
+        sz = samples[0].size()
+        frame = T.cat([t_outs, t_tgts, T.zeros_like(t_outs)], dim=1).permute(1,2,0,3).contiguous().view([3, sz[1], sz[2] * len(outs)])
+        n_frame = (frame.permute(1,2,0).clamp(min=0, max=1) * 255).numpy().astype(np.uint8)
+        vu.consume(n_frame)
 
 losses = np.array(losses)
 losses_std = np.array(losses_std)
