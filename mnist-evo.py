@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import numpy as np
 
 import torch as T
@@ -85,12 +86,16 @@ for m in model.modules():
 opt = T.optim.Adam(params=model.parameters(), lr=0.0001)
 
 vu = VU.VideoWriter('tst.mp4', show=True)
+losses = []
+losses_std = []
 
 smpl = T.unsqueeze(samples[0], 0)
 for ep in range(1000):
     outs = []
+    loop_losses = []
     for si in range(num_digits):
-#        smpl = T.unsqueeze(samples[si], 0)
+        if ep < 120:
+            smpl = T.unsqueeze(samples[si], 0)
         inp = Variable(smpl)
         tgt = Variable(T.unsqueeze(targets[si], 0))
 
@@ -100,10 +105,13 @@ for ep in range(1000):
         loss.backward()
         opt.step()
 
+        loop_losses.append(loss.cpu().data)
         outs.append(out.data.cpu()[0])
         smpl = out.data.clamp(0,1)
 
-    print('ep %d; loss %f' % (ep, loss.cpu().data))
+    losses.append(np.mean(loop_losses))
+    losses_std.append(np.std(loop_losses))
+    print('ep %d; loss %f +- %f' % (ep, losses[-1], losses_std[-1]))
     t_outs = T.stack(outs, 0)
     t_tgts = T.stack(targets).cpu()
 
@@ -111,3 +119,15 @@ for ep in range(1000):
     frame = T.cat([t_outs, t_tgts, T.zeros_like(t_outs)], dim=1).permute(1,2,0,3).contiguous().view([3, sz[1], sz[2] * len(outs)])
     n_frame = (frame.permute(1,2,0).clamp(min=0, max=1) * 255).numpy().astype(np.uint8)
     vu.consume(n_frame)
+
+losses = np.array(losses)
+losses_std = np.array(losses_std)
+
+xs = np.arange(len(losses))
+f = plt.figure(2)
+ax = f.add_subplot(111)
+ax.plot(xs, losses, 'r')
+ax.fill_between(xs, losses - losses_std, losses + losses_std, alpha=0.5)
+plt.ioff()
+plt.show()
+
