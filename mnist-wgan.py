@@ -111,6 +111,9 @@ d_xs = []
 g_losses = []
 d_losses = []
 
+g_losses_std = []
+d_losses_std = []
+
 num_epochs = 100
 batch_size = 24
 
@@ -128,28 +131,31 @@ for ep in range(num_epochs):
         fake = gen(noise)
         real = batch[0].cuda()
 
-        if k % 3 != 0:
+        if k % 10 != 0:
             dis_opt.zero_grad()
             w_loss = T.mean(dis(fake)) - T.mean(dis(real))
             w_loss.backward()
             dis_opt.step()
             loop_d_losses.append(w_loss.data.cpu())
+
+            for p in dis.parameters():
+                p.data[...] = p.data.clamp(-0.01, 0.01)
+
         else:
+            gen_opt.zero_grad()
             g_loss = - T.mean(dis(fake))
             g_loss.backward()
             gen_opt.step()
             loop_g_losses.append(g_loss.data.cpu())
 
         k += 1
-        if k == 50:
+        if k == 100:
             break
-
-    for p in dis.parameters():
-        p.data[...] = p.data.clamp(-0.01, 0.01)
 
     g_losses.append(np.mean(loop_g_losses))
     d_losses.append(np.mean(loop_d_losses))
-    #losses_std.append(np.std(loop_losses))
+    g_losses_std.append(np.std(loop_g_losses))
+    d_losses_std.append(np.std(loop_d_losses))
 
     print('ep %d; gloss %f; dloss %f' % (ep, g_losses[-1], d_losses[-1]))
     tst_out = gen(Variable(example))
@@ -160,13 +166,15 @@ for ep in range(num_epochs):
 g_losses = np.array(g_losses)
 d_losses = np.array(d_losses)
 
-#losses_std = np.array(losses_std)
+g_losses_std = np.array(g_losses_std)
+d_losses_std = np.array(d_losses_std)
 
 xs = np.arange(len(g_losses))
 f = plt.figure(2)
 ax = f.add_subplot(111)
 ax.plot(xs, g_losses, 'r', xs, d_losses, 'b')
-#ax.fill_between(xs, losses - losses_std, losses + losses_std, alpha=0.5)
+ax.fill_between(xs, g_losses - g_losses_std, g_losses + g_losses_std, alpha=0.3, color='r')
+ax.fill_between(xs, d_losses - d_losses_std, d_losses + d_losses_std, alpha=0.3, color='b')
 plt.ioff()
 plt.show()
 
