@@ -29,9 +29,33 @@ class LinearModel(nn.Module):
         return x.view(sz)
 
 
-class ConvDisc(nn.Module):
+class PersistentModule(nn.Module):
+    def __init__(self, name):
+        super(PersistentModule, self).__init__()
+        self.name = name
+
+    def savepath(self):
+        return self.name + '.mdl'
+
+    def save(self):
+        sp = self.savepath()
+        T.save(self.state_dict(), sp())
+        print('Saving model weights to %s' % sp)
+
+    def resume(self):
+        import os
+        sp = self.savepath()
+        if os.path.exists(sp):
+            print('Loading model parameters from %s' % sp)
+            self.load_state_dict(T.load(sp))
+        else:
+            print("Warning, no data found at %s, starting afresh" % sp)
+        return self
+
+
+class ConvDisc(PersistentModule):
     def __init__(self):
-        super(ConvDisc, self).__init__()
+        super(ConvDisc, self).__init__('ConvDisc')
         self.pos_pad = nn.ZeroPad2d((0, 1, 0, 1))
         self.neg_pad = nn.ZeroPad2d((0, -1, 0, -1))
         self.r = nn.ReLU()
@@ -58,9 +82,9 @@ class ConvDisc(nn.Module):
         return x
 
 
-class ConvGen(nn.Module):
-    def __init__(self, inp_size):
-        super(ConvGen, self).__init__()
+class ConvGen(PersistentModule):
+    def __init__(self):
+        super(ConvGen, self).__init__('ConvGen')
 
         self.inp_size = inp_size
         self.f = 32
@@ -95,8 +119,8 @@ class ConvGen(nn.Module):
 
 #model = LinearModel(l2=100).cuda()
 
-gen = ConvGen(inp_size=32).cuda()
-dis = ConvDisc().cuda()
+gen = ConvGen().resume().cuda()
+dis = ConvDisc().resume().cuda()
 
 gen_opt = T.optim.RMSprop(params=gen.parameters(), lr=0.0001)
 dis_opt = T.optim.RMSprop(params=dis.parameters(), lr=0.0001)
@@ -178,3 +202,5 @@ ax.fill_between(xs, d_losses - d_losses_std, d_losses + d_losses_std, alpha=0.3,
 plt.ioff()
 plt.show()
 
+gen.save()
+dis.save()
