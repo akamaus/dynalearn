@@ -39,7 +39,7 @@ class PersistentModule(nn.Module):
 
     def save(self):
         sp = self.savepath()
-        T.save(self.state_dict(), sp())
+        T.save(self.state_dict(), sp)
         print('Saving model weights to %s' % sp)
 
     def resume(self):
@@ -86,19 +86,19 @@ class ConvGen(PersistentModule):
     def __init__(self):
         super(ConvGen, self).__init__('ConvGen')
 
-        self.inp_size = inp_size
-        self.f = 32
+        self.f = 64
         self.s = 3
+        self.inp_size = self.f * self.s ** 2
 
         self.r = nn.ReLU()
         self.pos_pad = nn.ZeroPad2d((0, 1, 0, 1))
         self.neg_pad = nn.ZeroPad2d((0, -1, 0, -1))
 
-        self.lin1 = nn.Linear(inp_size, self.f * self.s ** 2)
+        #self.lin1 = nn.Linear(inp_size, self.f * self.s ** 2)
 
-        self.tconv3 = nn.ConvTranspose2d(32, 16, 3, 2)
-        self.tconv2 = nn.ConvTranspose2d(16, 8, 3, 2)
-        self.tconv1 = nn.ConvTranspose2d(8, 1, 3, 2)
+        self.tconv3 = nn.ConvTranspose2d(64, 32, 3, 2)
+        self.tconv2 = nn.ConvTranspose2d(32, 16, 3, 2)
+        self.tconv1 = nn.ConvTranspose2d(16, 1, 3, 2)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
@@ -108,7 +108,7 @@ class ConvGen(PersistentModule):
         sz = x.size()
         assert sz[1] == self.inp_size
 
-        x = self.r(self.lin1(x)).view((sz[0], self.f, self.s, self.s))
+        x = x.view((sz[0], self.f, self.s, self.s))
 
         x = self.r(self.tconv3(x))
         x = self.r(self.neg_pad(self.tconv2(x)))
@@ -138,7 +138,8 @@ d_losses = []
 g_losses_std = []
 d_losses_std = []
 
-num_epochs = 100
+num_epochs = 1000
+epoch_len = 100
 batch_size = 24
 
 example = T.rand((10, gen.inp_size)).cuda()
@@ -157,13 +158,14 @@ for ep in range(num_epochs):
 
         if k % 10 != 0:
             dis_opt.zero_grad()
+
             w_loss = T.mean(dis(fake)) - T.mean(dis(real))
             w_loss.backward()
             dis_opt.step()
             loop_d_losses.append(w_loss.data.cpu())
 
             for p in dis.parameters():
-                p.data[...] = p.data.clamp(-0.01, 0.01)
+                p.data[...] = p.data.clamp(-0.1, 0.1)
 
         else:
             gen_opt.zero_grad()
@@ -173,7 +175,7 @@ for ep in range(num_epochs):
             loop_g_losses.append(g_loss.data.cpu())
 
         k += 1
-        if k == 100:
+        if k == epoch_len:
             break
 
     g_losses.append(np.mean(loop_g_losses))
@@ -186,6 +188,13 @@ for ep in range(num_epochs):
     sz = tst_out.size()
     tst_pic = tst_out.data.permute(1,2,0,3).contiguous()[0].view((sz[2],-1)).cpu()
     vu.consume(tst_pic.numpy())
+
+    if ep > 0 and ep % 100 == 0:
+        gen.save()
+        dis.save()
+
+gen.save()
+dis.save()
 
 g_losses = np.array(g_losses)
 d_losses = np.array(d_losses)
@@ -201,6 +210,3 @@ ax.fill_between(xs, g_losses - g_losses_std, g_losses + g_losses_std, alpha=0.3,
 ax.fill_between(xs, d_losses - d_losses_std, d_losses + d_losses_std, alpha=0.3, color='b')
 plt.ioff()
 plt.show()
-
-gen.save()
-dis.save()
