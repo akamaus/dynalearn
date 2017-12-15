@@ -10,10 +10,16 @@ from torch.autograd import Variable
 
 import video_utils as VU
 
+NAME = 'gp'
+NUM_EPOCHS = 20000
+EPOCH_LEN = 100
+BATCH_SIZE = 24
+LAMBDA = 10
+
 mnist = TV.datasets.MNIST('MNIST_DATA', download=True, transform=TV.transforms.Compose([TV.transforms.ToTensor()]))
 num_digits = 10
 
-loader = T.utils.data.DataLoader(mnist, batch_size=4, shuffle=True)
+loader = T.utils.data.DataLoader(mnist, batch_size=BATCH_SIZE, shuffle=True)
 
 class LinearModel(nn.Module):
     def __init__(self, l2):
@@ -54,17 +60,17 @@ class PersistentModule(nn.Module):
 
 
 class ConvDisc(PersistentModule):
-    def __init__(self):
-        super(ConvDisc, self).__init__('ConvDisc')
+    def __init__(self, name):
+        super(ConvDisc, self).__init__('ConvDisc_' + name)
         self.pos_pad = nn.ZeroPad2d((0, 1, 0, 1))
         self.neg_pad = nn.ZeroPad2d((0, -1, 0, -1))
         self.r = nn.ReLU()
 
-        self.conv1 = nn.Conv2d(1, 8, 3, 2)
-        self.conv2 = nn.Conv2d(8, 16, 3, 2)
-        self.conv3 = nn.Conv2d(16, 32, 3, 2)
+        self.conv1 = nn.Conv2d(1, 16, 3, 2)
+        self.conv2 = nn.Conv2d(16, 32, 3, 2)
+        self.conv3 = nn.Conv2d(32, 64, 3, 2)
 
-        f = 32
+        f = 64
         s = 3
         self.lin1 = nn.Linear(f*s*s, 1)
 
@@ -83,8 +89,8 @@ class ConvDisc(PersistentModule):
 
 
 class ConvGen(PersistentModule):
-    def __init__(self):
-        super(ConvGen, self).__init__('ConvGen')
+    def __init__(self, name):
+        super(ConvGen, self).__init__('ConvGen_' + name)
 
         self.f = 64
         self.s = 3
@@ -113,17 +119,34 @@ class ConvGen(PersistentModule):
         x = self.r(self.tconv3(x))
         x = self.r(self.neg_pad(self.tconv2(x)))
         x = self.neg_pad(self.tconv1(x))
-        x = F.sigmoid(x)
+#        x = F.sigmoid(x)
         return x
+
+
+def calc_gradient_penalty(netD, real_data, fake_data):
+    alpha = T.rand(BATCH_SIZE, 1, 1, 1).cuda()
+
+    interpolates = alpha * real_data + ((1 - alpha) * fake_data)
+    interpolates = interpolates.cuda()
+
+    interpolates = Variable(interpolates, requires_grad=True)
+    disc_interpolates = netD(interpolates)
+
+    gradients = T.autograd.grad(outputs=disc_interpolates, inputs=interpolates,
+                              grad_outputs=T.ones(disc_interpolates.size()).cuda(),
+                              create_graph=True, retain_graph=True, only_inputs=True)[0]
+
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * LAMBDA
+    return gradient_penalty
 
 
 #model = LinearModel(l2=100).cuda()
 
-gen = ConvGen().resume().cuda()
-dis = ConvDisc().resume().cuda()
+gen = ConvGen(NAME).resume().cuda()
+dis = ConvDisc(NAME).resume().cuda()
 
-gen_opt = T.optim.RMSprop(params=gen.parameters(), lr=0.0001)
-dis_opt = T.optim.RMSprop(params=dis.parameters(), lr=0.0001)
+gen_opt = T.optim.Adam(params=gen.parameters(), lr=0.0001)
+dis_opt = T.optim.Adam(params=dis.parameters(), lr=0.0001)
 
 #opt = T.optim.SGD(params=model.parameters(), lr=0.0001, momentum=0.8, nesterov=True)
 
@@ -138,60 +161,61 @@ d_losses = []
 g_losses_std = []
 d_losses_std = []
 
-num_epochs = 1000
-epoch_len = 100
-batch_size = 24
-
 example = T.rand((10, gen.inp_size)).cuda()
 
-for ep in range(num_epochs):
-    loop_g_losses = []
-    loop_d_losses = []
+def train_loop():
+    for ep in range(NUM_EPOCHS):
+        loop_g_losses = []
+        loop_d_losses = []
 
-    k = 0
-    for batch in loader:
-        noise = T.rand((batch_size, gen.inp_size)).cuda()
+        k = 0
+        for batch in loader:
+            noise = T.rand((BATCH_SIZE, gen.inp_size)).cuda()
 
-        noise = Variable(noise)
-        fake = gen(noise)
-        real = batch[0].cuda()
+            train_d = True # k % 10 != 0
 
-        if k % 10 != 0:
-            dis_opt.zero_grad()
+            noise = Variable(noise)
+            fake = gen(noise)
+            real = batch[0].cuda()
 
-            w_loss = T.mean(dis(fake)) - T.mean(dis(real))
-            w_loss.backward()
-            dis_opt.step()
-            loop_d_losses.append(w_loss.data.cpu())
+            if train_d:
+                dis_opt.zero_grad()
+                w_loss = T.mean(dis(fake)) - T.mean(dis(real)) + calc_gradient_penalty(dis, real, fake.data)
+                w_loss.backward()
+                dis_opt.step()
 
-            for p in dis.parameters():
-                p.data[...] = p.data.clamp(-0.1, 0.1)
+                loop_d_losses.append(w_loss.data.cpu())
+            else:
+                gen_opt.zero_grad()
+                g_loss = - T.mean(dis(fake))
+                g_loss.backward()
+                gen_opt.step()
+                loop_g_losses.append(g_loss.data.cpu())
 
-        else:
-            gen_opt.zero_grad()
-            g_loss = - T.mean(dis(fake))
-            g_loss.backward()
-            gen_opt.step()
-            loop_g_losses.append(g_loss.data.cpu())
+            k += 1
+            if k == EPOCH_LEN:
+                break
 
-        k += 1
-        if k == epoch_len:
-            break
+        g_losses.append(np.mean(loop_g_losses))
+        d_losses.append(np.mean(loop_d_losses))
+        g_losses_std.append(np.std(loop_g_losses))
+        d_losses_std.append(np.std(loop_d_losses))
 
-    g_losses.append(np.mean(loop_g_losses))
-    d_losses.append(np.mean(loop_d_losses))
-    g_losses_std.append(np.std(loop_g_losses))
-    d_losses_std.append(np.std(loop_d_losses))
+        print('ep %d; gloss %f; dloss %f' % (ep, g_losses[-1], d_losses[-1]))
+        tst_out = gen(Variable(example))
+        sz = tst_out.size()
+        tst_pic = tst_out.data.permute(1,2,0,3).contiguous()[0].view((sz[2],-1)).cpu()
+        vu.consume(tst_pic.numpy())
 
-    print('ep %d; gloss %f; dloss %f' % (ep, g_losses[-1], d_losses[-1]))
-    tst_out = gen(Variable(example))
-    sz = tst_out.size()
-    tst_pic = tst_out.data.permute(1,2,0,3).contiguous()[0].view((sz[2],-1)).cpu()
-    vu.consume(tst_pic.numpy())
+        if ep > 0 and ep % 100 == 0:
+            gen.save()
+            dis.save()
 
-    if ep > 0 and ep % 100 == 0:
-        gen.save()
-        dis.save()
+
+try:
+    train_loop()
+except KeyboardInterrupt:
+    pass
 
 gen.save()
 dis.save()
