@@ -11,11 +11,13 @@ from torch.autograd import Variable
 import video_utils as VU
 from figure import Figure
 
+import mnist_models as mm
+
 NAME = 'gp'
 NUM_EPOCHS = 20000
-EPOCH_LEN = 1000
+EPOCH_LEN = 100
 BATCH_SIZE = 24
-LAMBDA = 100
+LAMBDA = 10
 
 mnist = TV.datasets.MNIST('MNIST_DATA', download=True, transform=TV.transforms.Compose([TV.transforms.ToTensor()]))
 num_digits = 10
@@ -36,31 +38,7 @@ class LinearModel(nn.Module):
         return x.view(sz)
 
 
-class PersistentModule(nn.Module):
-    def __init__(self, name):
-        super(PersistentModule, self).__init__()
-        self.name = name
-
-    def savepath(self):
-        return self.name + '.mdl'
-
-    def save(self):
-        sp = self.savepath()
-        T.save(self.state_dict(), sp)
-        print('Saving model weights to %s' % sp)
-
-    def resume(self):
-        import os
-        sp = self.savepath()
-        if os.path.exists(sp):
-            print('Loading model parameters from %s' % sp)
-            self.load_state_dict(T.load(sp))
-        else:
-            print("Warning, no data found at %s, starting afresh" % sp)
-        return self
-
-
-class ConvDisc(PersistentModule):
+class ConvDisc(mm.PersistentModule):
     def __init__(self, name):
         super(ConvDisc, self).__init__('ConvDisc_' + name)
         self.pos_pad = nn.ZeroPad2d((0, 1, 0, 1))
@@ -75,10 +53,6 @@ class ConvDisc(PersistentModule):
         s = 3
         self.lin1 = nn.Linear(f*s*s, 1)
 
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
-                nn.init.xavier_uniform(m.weight.data)
-
     def forward(self, x):
         x = self.r(self.conv1(self.pos_pad(x)))
         x = self.r(self.conv2(self.pos_pad(x)))
@@ -89,7 +63,7 @@ class ConvDisc(PersistentModule):
         return x
 
 
-class ConvGen(PersistentModule):
+class ConvGen(mm.PersistentModule):
     def __init__(self, name):
         super(ConvGen, self).__init__('ConvGen_' + name)
 
@@ -106,10 +80,6 @@ class ConvGen(PersistentModule):
         self.tconv3 = nn.ConvTranspose2d(64, 32, 3, 2)
         self.tconv2 = nn.ConvTranspose2d(32, 16, 3, 2)
         self.tconv1 = nn.ConvTranspose2d(16, 1, 3, 2)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
-                nn.init.xavier_uniform(m.weight.data)
 
     def forward(self, x):
         sz = x.size()
@@ -158,8 +128,11 @@ class Accumulator:
 
 #model = LinearModel(l2=100).cuda()
 
-gen = ConvGen(NAME).resume().cuda()
-dis = ConvDisc(NAME).resume().cuda()
+gen = mm.Generator(NAME).resume().cuda()
+dis = mm.Discriminator(NAME).resume().cuda()
+
+#gen = ConvGen(NAME).resume().cuda()
+#dis = ConvDisc(NAME).resume().cuda()
 
 gen_opt = T.optim.Adam(params=gen.parameters(), lr=0.0001)
 dis_opt = T.optim.Adam(params=dis.parameters(), lr=0.0001)
@@ -189,12 +162,12 @@ def train_loop():
 
             noise = Variable(noise)
             fake = gen(noise)
-            real = batch[0].cuda()
+            real = Variable(batch[0].cuda())
 
             if train_d:
                 dis_opt.zero_grad()
                 w_dist = T.mean(dis(real)) - T.mean(dis(fake))
-                w_loss = -w_dist + calc_gradient_penalty(dis, real, fake.data)
+                w_loss = -w_dist + calc_gradient_penalty(dis, real.data, fake.data)
                 w_loss.backward()
                 dis_opt.step()
 
