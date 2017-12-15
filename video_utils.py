@@ -29,16 +29,20 @@ class VideoWriter:
         else:
             self.writer = None
         self.show = show
-        if show:
-            plt.ion()
+
+        self.ax = None
         self.im = None
+        if show:
+            self.fig = plt.figure()
+            self.ax = self.fig.add_subplot(111)
+            plt.ion()
 
     def consume(self, img):
         if self.writer:
             self.writer.append_data(img)
         if self.show:
             if self.im is None:
-                self.im = plt.imshow(img)
+                self.im = self.ax.imshow(img)
             else:
                 self.im.set_data(img)
             plt.pause(0.01)

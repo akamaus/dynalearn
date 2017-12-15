@@ -9,12 +9,13 @@ import torchvision as TV
 from torch.autograd import Variable
 
 import video_utils as VU
+from figure import Figure
 
 NAME = 'gp'
 NUM_EPOCHS = 20000
-EPOCH_LEN = 100
+EPOCH_LEN = 1000
 BATCH_SIZE = 24
-LAMBDA = 10
+LAMBDA = 100
 
 mnist = TV.datasets.MNIST('MNIST_DATA', download=True, transform=TV.transforms.Compose([TV.transforms.ToTensor()]))
 num_digits = 10
@@ -140,6 +141,21 @@ def calc_gradient_penalty(netD, real_data, fake_data):
     return gradient_penalty
 
 
+class Accumulator:
+    def __init__(self):
+        self.history = []
+        self.history_std = []
+        self.last = []
+
+    def append(self, y):
+        self.last.append(y)
+
+    def accumulate(self):
+        self.history.append(np.mean(self.last))
+        self.history_std.append(np.std(self.last))
+        self.last.clear()
+
+
 #model = LinearModel(l2=100).cuda()
 
 gen = ConvGen(NAME).resume().cuda()
@@ -152,27 +168,24 @@ dis_opt = T.optim.Adam(params=dis.parameters(), lr=0.0001)
 
 vu = VU.VideoWriter('tst.mp4', show=True)
 
+fig = Figure(['g_loss', 'd_loss', 'W_dist'])
+
 g_xs = []
 d_xs = []
 
-g_losses = []
-d_losses = []
-
-g_losses_std = []
-d_losses_std = []
+g_losses = Accumulator()
+d_losses = Accumulator()
+w_dists = Accumulator()
 
 example = T.rand((10, gen.inp_size)).cuda()
 
 def train_loop():
     for ep in range(NUM_EPOCHS):
-        loop_g_losses = []
-        loop_d_losses = []
-
         k = 0
         for batch in loader:
             noise = T.rand((BATCH_SIZE, gen.inp_size)).cuda()
 
-            train_d = True # k % 10 != 0
+            train_d = k % 10 != 0
 
             noise = Variable(noise)
             fake = gen(noise)
@@ -180,28 +193,36 @@ def train_loop():
 
             if train_d:
                 dis_opt.zero_grad()
-                w_loss = T.mean(dis(fake)) - T.mean(dis(real)) + calc_gradient_penalty(dis, real, fake.data)
+                w_dist = T.mean(dis(real)) - T.mean(dis(fake))
+                w_loss = -w_dist + calc_gradient_penalty(dis, real, fake.data)
                 w_loss.backward()
                 dis_opt.step()
 
-                loop_d_losses.append(w_loss.data.cpu())
+                d_losses.append(w_loss.data.cpu())
+                w_dists.append(w_dist.data.cpu())
             else:
                 gen_opt.zero_grad()
                 g_loss = - T.mean(dis(fake))
                 g_loss.backward()
                 gen_opt.step()
-                loop_g_losses.append(g_loss.data.cpu())
+
+                g_losses.append(g_loss.data.cpu())
 
             k += 1
             if k == EPOCH_LEN:
                 break
 
-        g_losses.append(np.mean(loop_g_losses))
-        d_losses.append(np.mean(loop_d_losses))
-        g_losses_std.append(np.std(loop_g_losses))
-        d_losses_std.append(np.std(loop_d_losses))
+        g_losses.accumulate()
+        d_losses.accumulate()
+        w_dists.accumulate()
 
-        print('ep %d; gloss %f; dloss %f' % (ep, g_losses[-1], d_losses[-1]))
+        fig.plot('g_loss', g_losses.history)
+        fig.plot('d_loss', d_losses.history)
+        fig.plot('W_dist', w_dists.history)
+
+        fig.draw()
+
+        print('ep %d; gloss %f; dloss %f' % (ep, g_losses.history[-1], d_losses.history[-1]))
         tst_out = gen(Variable(example))
         sz = tst_out.size()
         tst_pic = tst_out.data.permute(1,2,0,3).contiguous()[0].view((sz[2],-1)).cpu()
@@ -220,17 +241,8 @@ except KeyboardInterrupt:
 gen.save()
 dis.save()
 
-g_losses = np.array(g_losses)
-d_losses = np.array(d_losses)
-
-g_losses_std = np.array(g_losses_std)
-d_losses_std = np.array(d_losses_std)
-
-xs = np.arange(len(g_losses))
-f = plt.figure(2)
-ax = f.add_subplot(111)
-ax.plot(xs, g_losses, 'r', xs, d_losses, 'b')
-ax.fill_between(xs, g_losses - g_losses_std, g_losses + g_losses_std, alpha=0.3, color='r')
-ax.fill_between(xs, d_losses - d_losses_std, d_losses + d_losses_std, alpha=0.3, color='b')
-plt.ioff()
-plt.show()
+# ax.plot(xs, g_losses, 'r', xs, d_losses, 'b')
+# ax.fill_between(xs, g_losses - g_losses_std, g_losses + g_losses_std, alpha=0.3, color='r')
+# ax.fill_between(xs, d_losses - d_losses_std, d_losses + d_losses_std, alpha=0.3, color='b')
+# plt.ioff()
+# plt.show()
