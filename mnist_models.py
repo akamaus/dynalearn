@@ -36,7 +36,7 @@ class PersistentModule(nn.Module):
 # ==================Definition Start======================
 class Generator(PersistentModule):
     def __init__(self, name):
-        super(Generator, self).__init__(name)
+        super(Generator, self).__init__(name + '_Generator')
 
         preprocess = nn.Sequential(
             nn.Linear(INP_SIZE, 4*4*4*DIM),
@@ -77,7 +77,7 @@ class Generator(PersistentModule):
 
 class Discriminator(PersistentModule):
     def __init__(self, name):
-        super(Discriminator, self).__init__(name)
+        super(Discriminator, self).__init__(name + '_Discriminator')
 
         main = nn.Sequential(
             nn.Conv2d(1, DIM, 5, stride=2, padding=2),

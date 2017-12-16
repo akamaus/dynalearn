@@ -18,6 +18,7 @@ NUM_EPOCHS = 20000
 EPOCH_LEN = 100
 BATCH_SIZE = 24
 LAMBDA = 10
+D_TRAIN_RATIO = 5
 
 mnist = TV.datasets.MNIST('MNIST_DATA', download=True, transform=TV.transforms.Compose([TV.transforms.ToTensor()]))
 num_digits = 10
@@ -107,7 +108,7 @@ def calc_gradient_penalty(netD, real_data, fake_data):
                               grad_outputs=T.ones(disc_interpolates.size()).cuda(),
                               create_graph=True, retain_graph=True, only_inputs=True)[0]
 
-    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * LAMBDA
+    gradient_penalty = ((gradients.view(BATCH_SIZE, -1).norm(2, dim=1) - 1) ** 2).mean() * LAMBDA
     return gradient_penalty
 
 
@@ -134,8 +135,8 @@ dis = mm.Discriminator(NAME).resume().cuda()
 #gen = ConvGen(NAME).resume().cuda()
 #dis = ConvDisc(NAME).resume().cuda()
 
-gen_opt = T.optim.Adam(params=gen.parameters(), lr=0.0001)
-dis_opt = T.optim.Adam(params=dis.parameters(), lr=0.0001)
+gen_opt = T.optim.Adam(params=gen.parameters(), lr=0.0001, betas=(0.5, 0.9))
+dis_opt = T.optim.Adam(params=dis.parameters(), lr=0.0001, betas=(0.5, 0.9))
 
 #opt = T.optim.SGD(params=model.parameters(), lr=0.0001, momentum=0.8, nesterov=True)
 
@@ -158,7 +159,7 @@ def train_loop():
         for batch in loader:
             noise = T.rand((BATCH_SIZE, gen.inp_size)).cuda()
 
-            train_d = k % 10 != 0
+            train_d = k % D_TRAIN_RATIO != 0
 
             noise = Variable(noise)
             fake = gen(noise)
