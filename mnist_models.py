@@ -27,9 +27,9 @@ class PersistentModule(nn.Module):
             self.load_state_dict(torch.load(sp))
         else:
             print("Warning, no data found at %s, starting afresh" % sp)
-            for m in self.modules():
-                if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
-                    nn.init.xavier_uniform(m.weight.data)
+            # for m in self.modules():
+            #     if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
+            #         nn.init.xavier_uniform(m.weight.data)
         return self
 
 
