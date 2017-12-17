@@ -129,14 +129,14 @@ class Accumulator:
 
 #model = LinearModel(l2=100).cuda()
 
-gen = mm.Generator(NAME).resume().cuda()
-dis = mm.Discriminator(NAME).resume().cuda()
+netG = mm.Generator(NAME).resume().cuda()
+netD = mm.Discriminator(NAME).resume().cuda()
 
 #gen = ConvGen(NAME).resume().cuda()
 #dis = ConvDisc(NAME).resume().cuda()
 
-gen_opt = T.optim.Adam(params=gen.parameters(), lr=0.0001, betas=(0.5, 0.9))
-dis_opt = T.optim.Adam(params=dis.parameters(), lr=0.0001, betas=(0.5, 0.9))
+gen_opt = T.optim.Adam(params=netG.parameters(), lr=0.0001, betas=(0.5, 0.9))
+dis_opt = T.optim.Adam(params=netD.parameters(), lr=0.0001, betas=(0.5, 0.9))
 
 #opt = T.optim.SGD(params=model.parameters(), lr=0.0001, momentum=0.8, nesterov=True)
 
@@ -151,40 +151,52 @@ g_losses = Accumulator()
 d_losses = Accumulator()
 w_dists = Accumulator()
 
-example = T.rand((10, gen.inp_size)).cuda()
+one = T.FloatTensor([1]).cuda()
+mone = one * -1
+
+
+def batches_gen():
+    while True:
+        for b, _ in loader:
+            yield b
+
+
+def gen_noise():
+    return T.rand(BATCH_SIZE, netG.inp_size).cuda()
 
 def train_loop():
+    example = gen_noise()
+    batch_gen = batches_gen()
     for ep in range(NUM_EPOCHS):
-        k = 0
-        for batch in loader:
-            noise = T.rand((BATCH_SIZE, gen.inp_size)).cuda()
-
+        for k in range(EPOCH_LEN):
+            batch = next(batch_gen)
             train_d = k % D_TRAIN_RATIO != 0
 
-            noise = Variable(noise)
-            fake = gen(noise)
-            real = Variable(batch[0].cuda())
+            noise = Variable(T.rand((BATCH_SIZE, netG.inp_size)).cuda())
+            fake = netG(noise)
+
+            real = Variable(batch.cuda())
 
             if train_d:
                 dis_opt.zero_grad()
-                w_dist = T.mean(dis(real)) - T.mean(dis(fake))
-                w_loss = -w_dist + calc_gradient_penalty(dis, real.data, fake.data)
+                w_dist = T.mean(netD(real)) - T.mean(netD(fake))
+                w_loss = -w_dist
                 w_loss.backward()
+
+                penalty = calc_gradient_penalty(netD, real.data, fake.data)
+                penalty.backward()
+
                 dis_opt.step()
 
                 d_losses.append(w_loss.data.cpu())
                 w_dists.append(w_dist.data.cpu())
             else:
                 gen_opt.zero_grad()
-                g_loss = - T.mean(dis(fake))
+                g_loss = - T.mean(netD(fake))
                 g_loss.backward()
                 gen_opt.step()
 
                 g_losses.append(g_loss.data.cpu())
-
-            k += 1
-            if k == EPOCH_LEN:
-                break
 
         g_losses.accumulate()
         d_losses.accumulate()
@@ -197,14 +209,14 @@ def train_loop():
         fig.draw()
 
         print('ep %d; gloss %f; dloss %f' % (ep, g_losses.history[-1], d_losses.history[-1]))
-        tst_out = gen(Variable(example))
+        tst_out = netG(Variable(example))
         sz = tst_out.size()
         tst_pic = tst_out.data.permute(1,2,0,3).contiguous()[0].view((sz[2],-1)).cpu()
         vu.consume(tst_pic.numpy())
 
         if ep > 0 and ep % 100 == 0:
-            gen.save()
-            dis.save()
+            netG.save()
+            netD.save()
 
 
 try:
@@ -212,8 +224,8 @@ try:
 except KeyboardInterrupt:
     pass
 
-gen.save()
-dis.save()
+netG.save()
+netD.save()
 
 # ax.plot(xs, g_losses, 'r', xs, d_losses, 'b')
 # ax.fill_between(xs, g_losses - g_losses_std, g_losses + g_losses_std, alpha=0.3, color='r')
