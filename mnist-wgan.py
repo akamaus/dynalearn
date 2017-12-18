@@ -97,6 +97,7 @@ class ConvGen(mm.PersistentModule):
 #        x = F.sigmoid(x)
         return x
 
+czero = Variable(T.cuda.FloatTensor([0]))
 
 def calc_gradient_penalty(netD, real_data, fake_data):
     alpha = T.rand(BATCH_SIZE, 1, 1, 1).cuda()
@@ -111,7 +112,7 @@ def calc_gradient_penalty(netD, real_data, fake_data):
                               grad_outputs=T.ones(disc_interpolates.size()).cuda(),
                               create_graph=True, retain_graph=True, only_inputs=True)[0]
 
-    gradient_penalty = ((gradients.view(BATCH_SIZE, -1).norm(2, dim=1) - 1) ** 2).mean() * LAMBDA
+    gradient_penalty = (T.max(czero, gradients.view(BATCH_SIZE, -1).norm(2, dim=1) - 1) ** 2).mean() * LAMBDA
     return gradient_penalty
 
 
