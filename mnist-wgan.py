@@ -13,12 +13,15 @@ from figure import Figure
 
 import mnist_models as mm
 
-NAME = 'gp'
+NAME = 'gp_prelu'
 NUM_EPOCHS = 20000
 EPOCH_LEN = 100
 BATCH_SIZE = 24
 LAMBDA = 10
 D_TRAIN_RATIO = 5
+
+NUM_TST_SAMPLES = 40
+NUM_TST_ROWS = 5
 
 mnist = TV.datasets.MNIST('MNIST_DATA', download=True, transform=TV.transforms.Compose([TV.transforms.ToTensor()]))
 num_digits = 10
@@ -140,7 +143,7 @@ dis_opt = T.optim.Adam(params=netD.parameters(), lr=0.0001, betas=(0.5, 0.9))
 
 #opt = T.optim.SGD(params=model.parameters(), lr=0.0001, momentum=0.8, nesterov=True)
 
-vu = VU.VideoWriter('tst.mp4', show=True)
+vu = VU.VideoWriter('%s_evolution.mp4' % NAME, show=True)
 
 fig = Figure(['g_loss', 'd_loss', 'W_dist'])
 
@@ -161,11 +164,11 @@ def batches_gen():
             yield b
 
 
-def gen_noise():
-    return T.rand(BATCH_SIZE, netG.inp_size).cuda()
+def gen_noise(num_samples=BATCH_SIZE):
+    return T.rand(num_samples, netG.inp_size).cuda()
 
 def train_loop():
-    example = gen_noise()
+    example = gen_noise(NUM_TST_SAMPLES)
     batch_gen = batches_gen()
     for ep in range(NUM_EPOCHS):
         for k in range(EPOCH_LEN):
@@ -211,8 +214,11 @@ def train_loop():
         print('ep %d; gloss %f; dloss %f' % (ep, g_losses.history[-1], d_losses.history[-1]))
         tst_out = netG(Variable(example))
         sz = tst_out.size()
-        tst_pic = tst_out.data.permute(1,2,0,3).contiguous()[0].view((sz[2],-1)).cpu()
-        vu.consume(tst_pic.numpy())
+        one_line_pic = tst_out.data.permute(1,2,0,3).contiguous()[0].view((sz[2],-1))
+        pics = one_line_pic.chunk(NUM_TST_ROWS, dim=1)
+        pic = T.cat(pics, dim=0).cpu()
+
+        vu.consume(pic.numpy())
 
         if ep > 0 and ep % 100 == 0:
             netG.save()

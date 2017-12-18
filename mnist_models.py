@@ -40,15 +40,15 @@ class Generator(PersistentModule):
 
         preprocess = nn.Sequential(
             nn.Linear(INP_SIZE, 4*4*4*DIM),
-            nn.ReLU(True),
+            nn.PReLU(),
         )
         block1 = nn.Sequential(
             nn.ConvTranspose2d(4*DIM, 2*DIM, 5),
-            nn.ReLU(True),
+            nn.PReLU(),
         )
         block2 = nn.Sequential(
             nn.ConvTranspose2d(2*DIM, DIM, 5),
-            nn.ReLU(True),
+            nn.PReLU(),
         )
         deconv_out = nn.ConvTranspose2d(DIM, 1, 8, stride=2)
 
@@ -82,13 +82,13 @@ class Discriminator(PersistentModule):
         main = nn.Sequential(
             nn.Conv2d(1, DIM, 5, stride=2, padding=2),
             # nn.Linear(OUTPUT_DIM, 4*4*4*DIM),
-            nn.ReLU(True),
+            nn.PReLU(),
             nn.Conv2d(DIM, 2*DIM, 5, stride=2, padding=2),
             # nn.Linear(4*4*4*DIM, 4*4*4*DIM),
-            nn.ReLU(True),
+            nn.PReLU(),
             nn.Conv2d(2*DIM, 4*DIM, 5, stride=2, padding=2),
             # nn.Linear(4*4*4*DIM, 4*4*4*DIM),
-            nn.ReLU(True),
+            nn.PReLU(),
             # nn.Linear(4*4*4*DIM, 4*4*4*DIM),
             # nn.LeakyReLU(True),
             # nn.Linear(4*4*4*DIM, 4*4*4*DIM),
