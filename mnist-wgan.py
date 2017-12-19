@@ -97,9 +97,8 @@ dis_opt = T.optim.Adam(params=netD.parameters(), lr=0.0001, betas=(0.5, 0.9))
 vu = VU.VideoWriter('%s_evolution.mp4' % NAME, show=True)
 
 
-g_losses = Accumulator()
-d_losses = Accumulator(with_std=True)
-w_dists = Accumulator()
+g_costs = Accumulator(with_std=True)
+w_dists = Accumulator(with_std=True)
 
 d_grad_norms = Accumulator(with_std=True)
 g_grad_norms = Accumulator(with_std=True)
@@ -107,7 +106,7 @@ g_grad_norms = Accumulator(with_std=True)
 g_grad = GradientHistory(netG)
 d_grad = GradientHistory(netD)
 
-fig = Figure(accums={'g_loss': g_losses, 'd_loss': d_losses,
+fig = Figure(accums={'G_cost': g_costs,
                      'W_dist': w_dists,
                      'g_grad': g_grad_norms, 'd_grad': d_grad_norms})
 
@@ -146,7 +145,6 @@ def train_loop():
                 dis_opt.step()
 
                 d_grad.update()
-                d_losses.append(w_loss.data.cpu())
                 w_dists.append(w_dist.data.cpu())
             else:
                 gen_opt.zero_grad()
@@ -155,18 +153,17 @@ def train_loop():
                 gen_opt.step()
 
                 g_grad.update()
-                g_losses.append(g_loss.data.cpu())
+                g_costs.append(-g_loss.data.cpu())
 
         g_grad_norms.accumulate_raw(g_grad.get_mean_norm(), g_grad.get_std_norm())
         d_grad_norms.accumulate_raw(d_grad.get_mean_norm(), d_grad.get_std_norm())
-        g_losses.accumulate()
-        d_losses.accumulate()
+        g_costs.accumulate()
         w_dists.accumulate()
 
         fig.plot_accums()
         fig.draw()
 
-        print('ep %d; gloss %f; dloss %f' % (ep, g_losses.history[-1], d_losses.history[-1]))
+        print('ep %d; w_dist %f; g_cost %f' % (ep, w_dists.history[-1], g_costs.history[-1]))
         tst_out = netG(Variable(example))
         sz = tst_out.size()
         one_line_pic = tst_out.data.permute(1,2,0,3).contiguous()[0].view((sz[2],-1))
