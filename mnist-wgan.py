@@ -29,6 +29,38 @@ num_digits = 10
 loader = T.utils.data.DataLoader(mnist, batch_size=BATCH_SIZE, shuffle=True)
 
 
+class GradientHistory:
+    def __init__(self, model, tau=0.9):
+        self.model = model
+        self.tau = tau
+        self.mean_grads = None
+        self.disp_grads = None
+        #for p in model.parameters():
+        #    self.mean_grads.append(T.zeros_like(p.data))
+
+    def flat_grads(self):
+        return T.cat(list(map(lambda p: p.grad.data.view(-1), self.model.parameters())), dim=0)
+
+    def update(self):
+        grads = self.flat_grads()
+        if self.mean_grads is None:
+            self.mean_grads = grads
+        else:
+            self.mean_grads += (grads - self.mean_grads) * self.tau
+
+        disp = (grads - self.mean_grads)**2
+        if self.disp_grads is None:
+            self.disp_grads = disp
+        else:
+            self.disp_grads += (disp - self.disp_grads) * self.tau
+
+    def get_mean_norm(self):
+        return self.mean_grads.norm(2)
+
+    def get_std_norm(self):
+        return self.std_grads.norm(2).sqrt()
+
+
 czero = Variable(T.cuda.FloatTensor([0]))
 
 def calc_gradient_penalty(netD, real_data, fake_data):
@@ -78,7 +110,8 @@ dis_opt = T.optim.Adam(params=netD.parameters(), lr=0.0001, betas=(0.5, 0.9))
 
 vu = VU.VideoWriter('%s_evolution.mp4' % NAME, show=True)
 
-fig = Figure(['g_loss', 'd_loss', 'W_dist'])
+fig = Figure(['g_loss', 'd_loss', 'W_dist',
+              'g_grad', 'd_grad'])
 
 g_xs = []
 d_xs = []
@@ -86,6 +119,12 @@ d_xs = []
 g_losses = Accumulator()
 d_losses = Accumulator()
 w_dists = Accumulator()
+
+d_grad_norms = Accumulator()
+g_grad_norms = Accumulator()
+
+g_grad = GradientHistory(netG)
+d_grad = GradientHistory(netD)
 
 one = T.FloatTensor([1]).cuda()
 mone = one * -1
@@ -124,6 +163,7 @@ def train_loop():
 
                 dis_opt.step()
 
+                d_grad.update()
                 d_losses.append(w_loss.data.cpu())
                 w_dists.append(w_dist.data.cpu())
             else:
@@ -132,8 +172,14 @@ def train_loop():
                 g_loss.backward()
                 gen_opt.step()
 
+                g_grad.update()
                 g_losses.append(g_loss.data.cpu())
 
+        g_grad_norms.append(g_grad.get_mean_norm())
+        d_grad_norms.append(d_grad.get_mean_norm())
+
+        g_grad_norms.accumulate()
+        d_grad_norms.accumulate()
         g_losses.accumulate()
         d_losses.accumulate()
         w_dists.accumulate()
@@ -141,6 +187,8 @@ def train_loop():
         fig.plot('g_loss', g_losses.history)
         fig.plot('d_loss', d_losses.history)
         fig.plot('W_dist', w_dists.history)
+        fig.plot('g_grad', g_grad_norms.history)
+        fig.plot('d_grad', d_grad_norms.history)
 
         fig.draw()
 
