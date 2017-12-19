@@ -1,15 +1,16 @@
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np
 
 import torch as T
+from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision as TV
 
-from torch.autograd import Variable
-
-import video_utils as VU
 from figure import Figure, Accumulator
+import video_utils as VU
 
 import mnist_models as mm
 
@@ -58,7 +59,7 @@ class GradientHistory:
         return self.mean_grads.norm(2)
 
     def get_std_norm(self):
-        return self.std_grads.norm(2).sqrt()
+        return math.sqrt(self.disp_grads.norm(2))
 
 
 czero = Variable(T.cuda.FloatTensor([0]))
@@ -97,11 +98,11 @@ vu = VU.VideoWriter('%s_evolution.mp4' % NAME, show=True)
 
 
 g_losses = Accumulator()
-d_losses = Accumulator()
+d_losses = Accumulator(with_std=True)
 w_dists = Accumulator()
 
-d_grad_norms = Accumulator()
-g_grad_norms = Accumulator()
+d_grad_norms = Accumulator(with_std=True)
+g_grad_norms = Accumulator(with_std=True)
 
 g_grad = GradientHistory(netG)
 d_grad = GradientHistory(netD)
@@ -156,8 +157,8 @@ def train_loop():
                 g_grad.update()
                 g_losses.append(g_loss.data.cpu())
 
-        g_grad_norms.accumulate_raw(g_grad.get_mean_norm())
-        d_grad_norms.accumulate_raw(d_grad.get_mean_norm())
+        g_grad_norms.accumulate_raw(g_grad.get_mean_norm(), g_grad.get_std_norm())
+        d_grad_norms.accumulate_raw(d_grad.get_mean_norm(), d_grad.get_std_norm())
         g_losses.accumulate()
         d_losses.accumulate()
         w_dists.accumulate()
