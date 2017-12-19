@@ -9,7 +9,7 @@ import torchvision as TV
 from torch.autograd import Variable
 
 import video_utils as VU
-from figure import Figure
+from figure import Figure, Accumulator
 
 import mnist_models as mm
 
@@ -80,21 +80,6 @@ def calc_gradient_penalty(netD, real_data, fake_data):
     return gradient_penalty
 
 
-class Accumulator:
-    def __init__(self):
-        self.history = []
-        self.history_std = []
-        self.last = []
-
-    def append(self, y):
-        self.last.append(y)
-
-    def accumulate(self):
-        self.history.append(np.mean(self.last))
-        self.history_std.append(np.std(self.last))
-        self.last.clear()
-
-
 #model = LinearModel(l2=100).cuda()
 
 netG = mm.Generator(NAME).resume().cuda()
@@ -110,11 +95,6 @@ dis_opt = T.optim.Adam(params=netD.parameters(), lr=0.0001, betas=(0.5, 0.9))
 
 vu = VU.VideoWriter('%s_evolution.mp4' % NAME, show=True)
 
-fig = Figure(['g_loss', 'd_loss', 'W_dist',
-              'g_grad', 'd_grad'])
-
-g_xs = []
-d_xs = []
 
 g_losses = Accumulator()
 d_losses = Accumulator()
@@ -126,8 +106,9 @@ g_grad_norms = Accumulator()
 g_grad = GradientHistory(netG)
 d_grad = GradientHistory(netD)
 
-one = T.FloatTensor([1]).cuda()
-mone = one * -1
+fig = Figure(accums={'g_loss': g_losses, 'd_loss': d_losses,
+                     'W_dist': w_dists,
+                     'g_grad': g_grad_norms, 'd_grad': d_grad_norms})
 
 
 def batches_gen():
@@ -175,21 +156,13 @@ def train_loop():
                 g_grad.update()
                 g_losses.append(g_loss.data.cpu())
 
-        g_grad_norms.append(g_grad.get_mean_norm())
-        d_grad_norms.append(d_grad.get_mean_norm())
-
-        g_grad_norms.accumulate()
-        d_grad_norms.accumulate()
+        g_grad_norms.accumulate_raw(g_grad.get_mean_norm())
+        d_grad_norms.accumulate_raw(d_grad.get_mean_norm())
         g_losses.accumulate()
         d_losses.accumulate()
         w_dists.accumulate()
 
-        fig.plot('g_loss', g_losses.history)
-        fig.plot('d_loss', d_losses.history)
-        fig.plot('W_dist', w_dists.history)
-        fig.plot('g_grad', g_grad_norms.history)
-        fig.plot('d_grad', d_grad_norms.history)
-
+        fig.plot_accums()
         fig.draw()
 
         print('ep %d; gloss %f; dloss %f' % (ep, g_losses.history[-1], d_losses.history[-1]))
